@@ -108,6 +108,21 @@ APP_FINAL="$EXPORT_DIR/$APP_NAME.app"
 if [ "$APP_LOCAL" != "$APP_FINAL" ]; then
   mv "$APP_LOCAL" "$APP_FINAL"
 fi
+
+# Bundle rename leaves Contents/MacOS/iTerm2 mismatched with Info.plist's
+# CFBundleExecutable (=MomenTerm). LaunchServices reads the plist and looks
+# for a binary by that exact name; if missing, it rejects the bundle with
+# "application is damaged or incomplete and can't be opened." Rename the
+# main binary to match. Helpers (iterm2-*-adapter, iTermServer, ShellLauncher,
+# iTerm2ImportStatus.app) keep their names — main app spawns them by literal
+# string. Guarded so a second run is a no-op.
+MAIN_EXPECTED="$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_FINAL/Contents/Info.plist")"
+if [ -n "$MAIN_EXPECTED" ] \
+   && [ -e "$APP_FINAL/Contents/MacOS/iTerm2" ] \
+   && [ ! -e "$APP_FINAL/Contents/MacOS/$MAIN_EXPECTED" ]; then
+  mv "$APP_FINAL/Contents/MacOS/iTerm2" "$APP_FINAL/Contents/MacOS/$MAIN_EXPECTED"
+fi
+
 ditto -c -k --keepParent "$APP_FINAL" "$ZIP"
 
 ZIP_LENGTH=$(stat -f%z "$ZIP")
@@ -151,6 +166,10 @@ echo "[release] appcast written to $APPCAST"
 ZIP_SHA256="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
 NOTES_FILE="$OUT/release_notes.md"
 CHANGELOG_FILE="$OUT/changelog.txt"
+# Human-readable build descriptor for the release notes header. Falls back to
+# the tag name if we are not in a tagged commit (e.g. building from a dirty
+# tree). `set -u` at the top would otherwise crash the sed substitution below.
+GIT_DESCRIBE="$(git -C "$REPO_ROOT" describe --tags --always --dirty 2>/dev/null || echo "$TAG")"
 PREV_TAG="$(git -C "$REPO_ROOT" describe --tags --abbrev=0 --exclude="$TAG" 2>/dev/null || echo "")"
 if [ -n "$PREV_TAG" ]; then
   git -C "$REPO_ROOT" log "$PREV_TAG"..HEAD --pretty='- %s' | head -n 50 > "$CHANGELOG_FILE"
