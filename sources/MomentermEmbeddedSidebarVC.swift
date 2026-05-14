@@ -183,6 +183,7 @@ private struct DropTarget {
     private var outlineView: MtSidebarOutlineView!
     private var scrollView: NSScrollView!
     private var dropOverlay: DropOverlayView!
+    private var emptyStateView: NSView!
     private var keyMonitor: Any?
     /// Temporary strong reference to keep the path-picker trampoline alive during a modal alert.
     private var _retainedPathPicker: AnyObject?
@@ -310,7 +311,64 @@ private struct DropTarget {
         dropOverlay.autoresizingMask = [.width, .height]
         view.addSubview(dropOverlay, positioned: .above, relativeTo: scrollView)
 
+        emptyStateView = buildEmptyStateView(width: w)
+        emptyStateView.isHidden = true
+        view.addSubview(emptyStateView, positioned: .above, relativeTo: scrollView)
+
         positionControls()
+        updateEmptyStateVisibility()
+    }
+
+    private func buildEmptyStateView(width: CGFloat) -> NSView {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: 240))
+        container.autoresizingMask = [.width, .height]
+        container.wantsLayer = true
+
+        let pad: CGFloat = 16
+        let contentW = width - pad * 2
+        let block1Y: CGFloat = 140
+        let block2Y: CGFloat = 40
+
+        let line1 = NSTextField(labelWithString: "열린 폴더가 없습니다.")
+        line1.frame = NSRect(x: pad, y: block1Y + 40, width: contentW, height: 18)
+        line1.autoresizingMask = [.width, .minYMargin]
+        line1.textColor = .secondaryLabelColor
+        line1.font = .systemFont(ofSize: 12)
+        line1.alignment = .left
+        line1.lineBreakMode = .byWordWrapping
+        line1.maximumNumberOfLines = 2
+        container.addSubview(line1)
+
+        let openBtn = NSButton(title: "폴더 열기", target: nil, action: nil)
+        openBtn.frame = NSRect(x: pad, y: block1Y, width: contentW, height: 32)
+        openBtn.autoresizingMask = [.width, .minYMargin]
+        openBtn.bezelStyle = .rounded
+        openBtn.controlSize = .large
+        openBtn.keyEquivalent = "\r"
+        openBtn.target = self
+        openBtn.action = #selector(emptyStateOpenFolderTapped)
+        container.addSubview(openBtn)
+
+        let line2 = NSTextField(labelWithString: "저장소를 로컬에 복제할 수 있습니다.")
+        line2.frame = NSRect(x: pad, y: block2Y + 40, width: contentW, height: 18)
+        line2.autoresizingMask = [.width, .minYMargin]
+        line2.textColor = .secondaryLabelColor
+        line2.font = .systemFont(ofSize: 12)
+        line2.alignment = .left
+        line2.lineBreakMode = .byWordWrapping
+        line2.maximumNumberOfLines = 2
+        container.addSubview(line2)
+
+        let cloneBtn = NSButton(title: "저장소 복제", target: nil, action: nil)
+        cloneBtn.frame = NSRect(x: pad, y: block2Y, width: contentW, height: 32)
+        cloneBtn.autoresizingMask = [.width, .minYMargin]
+        cloneBtn.bezelStyle = .rounded
+        cloneBtn.controlSize = .large
+        cloneBtn.target = self
+        cloneBtn.action = #selector(emptyStateCloneRepoTapped)
+        container.addSubview(cloneBtn)
+
+        return container
     }
 
     private func positionControls() {
@@ -324,6 +382,7 @@ private struct DropTarget {
         separator.frame      = NSRect(x: 0, y: h - topH - sepH, width: w, height: sepH)
         scrollView.frame     = NSRect(x: 0, y: 0, width: w, height: h - topH - sepH)
         dropOverlay?.frame   = scrollView.frame
+        emptyStateView?.frame = scrollView.frame
     }
 
     override func viewDidLayout() {
@@ -336,6 +395,14 @@ private struct DropTarget {
     @objc func reloadData() {
         store = MomentermProjectStorage.shared.load()
         applyFilter(query: searchField?.stringValue ?? "")
+        updateEmptyStateVisibility()
+    }
+
+    private func updateEmptyStateVisibility() {
+        let isEmpty = store.spaces.isEmpty
+        emptyStateView?.isHidden = !isEmpty
+        scrollView?.isHidden = isEmpty
+        dropOverlay?.isHidden = isEmpty
     }
 
     /// Selects the sidebar row whose project path matches `path`.
@@ -385,20 +452,15 @@ private struct DropTarget {
     }
 
     @objc private func addSpaceTapped() {
-        let alert = NSAlert()
-        alert.messageText = "새 Workspace 만들기"
-        alert.informativeText = "Workspace 이름을 입력하세요:"
-        alert.addButton(withTitle: "만들기")
-        alert.addButton(withTitle: "취소")
-        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        tf.placeholderString = "Workspace 이름"
-        alert.accessoryView = tf
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = tf.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else { return }
-        // Handle storage here; no need to bounce through the delegate
-        _ = MomentermProjectStorage.shared.addSpace(named: name)
-        reloadData()
+        openFolderAsWorkspace()
+    }
+
+    @objc private func emptyStateOpenFolderTapped() {
+        openFolderAsWorkspace()
+    }
+
+    @objc private func emptyStateCloneRepoTapped() {
+        cloneRepositoryAsWorkspace()
     }
 
     @objc private func doubleClicked() {
@@ -440,13 +502,17 @@ private struct DropTarget {
     @objc private func settingsTapped() {
         let menu = NSMenu()
 
-        let shortcutsItem = NSMenuItem(title: "키보드 단축키...", action: #selector(showShortcutsPopover), keyEquivalent: "")
+        let guideItem = NSMenuItem(title: "MomenTerm 사용 가이드", action: #selector(showUserGuidePopover), keyEquivalent: "")
+        guideItem.target = self
+        menu.addItem(guideItem)
+
+        let shortcutsItem = NSMenuItem(title: "키보드 단축키", action: #selector(showShortcutsPopover), keyEquivalent: "")
         shortcutsItem.target = self
         menu.addItem(shortcutsItem)
 
         menu.addItem(NSMenuItem.separator())
 
-        let passkeyTitle = MomentermPasskeyManager.shared.isPasskeySet ? "패스키 변경/해제..." : "패스키 설정..."
+        let passkeyTitle = MomentermPasskeyManager.shared.isPasskeySet ? "패스키 변경/해제" : "패스키 설정"
         let passkeyItem = NSMenuItem(title: passkeyTitle, action: #selector(managePasskey), keyEquivalent: "")
         passkeyItem.target = self
         menu.addItem(passkeyItem)
@@ -529,6 +595,269 @@ private struct DropTarget {
         popover.contentViewController = vc
         popover.contentSize = contentView.frame.size
         popover.show(relativeTo: settingsButton.bounds, of: settingsButton, preferredEdge: .maxY)
+    }
+
+    // MARK: - User Guide (신규 사용자 가이드)
+
+    @objc private func showUserGuidePopover() {
+        let popover = NSPopover()
+        popover.behavior = .semitransient
+
+        let w: CGFloat = 460
+        let h: CGFloat = 540
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.borderType = .noBorder
+        scrollView.drawsBackground = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.automaticallyAdjustsContentInsets = false
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: w, height: h))
+        textView.minSize = NSSize(width: 0, height: 0)
+        textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.drawsBackground = false
+        textView.textContainerInset = NSSize(width: 18, height: 18)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textStorage?.setAttributedString(makeUserGuideAttributedString())
+
+        scrollView.documentView = textView
+
+        let vc = NSViewController()
+        vc.view = scrollView
+        popover.contentViewController = vc
+        popover.contentSize = NSSize(width: w, height: h)
+        popover.show(relativeTo: settingsButton.bounds, of: settingsButton, preferredEdge: .maxY)
+    }
+
+    private func makeUserGuideAttributedString() -> NSAttributedString {
+        let out = NSMutableAttributedString()
+
+        // 단락 스타일 프리셋
+        let pTitle: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacing = 2
+            return p
+        }()
+        let pSubtitle: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacing = 16
+            p.lineSpacing = 2
+            return p
+        }()
+        let pSection: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacingBefore = 14
+            p.paragraphSpacing = 6
+            return p
+        }()
+        let pSubhead: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacingBefore = 6
+            p.paragraphSpacing = 2
+            return p
+        }()
+        let pBody: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = 3
+            p.paragraphSpacing = 4
+            return p
+        }()
+        let pStep: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = 3
+            p.headIndent = 20
+            p.firstLineHeadIndent = 0
+            p.paragraphSpacing = 3
+            return p
+        }()
+        let pBullet: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = 2
+            p.headIndent = 36
+            p.firstLineHeadIndent = 20
+            p.paragraphSpacing = 2
+            return p
+        }()
+        let pKbd: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.lineSpacing = 2
+            p.tabStops = [NSTextTab(textAlignment: .left, location: 76)]
+            p.defaultTabInterval = 76
+            p.firstLineHeadIndent = 12
+            p.headIndent = 88
+            p.paragraphSpacing = 2
+            return p
+        }()
+        let pTip: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacingBefore = 6
+            p.paragraphSpacing = 6
+            p.lineSpacing = 2
+            p.firstLineHeadIndent = 0
+            p.headIndent = 22
+            return p
+        }()
+        let pClose: NSMutableParagraphStyle = {
+            let p = NSMutableParagraphStyle()
+            p.paragraphSpacingBefore = 16
+            p.lineSpacing = 3
+            return p
+        }()
+
+        // 속성 프리셋
+        let aTitle: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 18, weight: .bold),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: pTitle,
+        ]
+        let aSubtitle: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: pSubtitle,
+        ]
+        let aSection: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 14, weight: .semibold),
+            .foregroundColor: NSColor.controlAccentColor,
+            .paragraphStyle: pSection,
+        ]
+        let aSubhead: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+            .foregroundColor: NSColor.tertiaryLabelColor,
+            .paragraphStyle: pSubhead,
+        ]
+        let aBody: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: pBody,
+        ]
+        let aStep: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: pStep,
+        ]
+        let aBullet: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .regular),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: pBullet,
+        ]
+        let aKbdKey: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .medium),
+            .foregroundColor: NSColor.secondaryLabelColor,
+            .paragraphStyle: pKbd,
+        ]
+        let aKbdDesc: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: pKbd,
+        ]
+        let aTip: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: NSColor.systemTeal,
+            .paragraphStyle: pTip,
+        ]
+        let aClose: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 12, weight: .medium),
+            .foregroundColor: NSColor.labelColor,
+            .paragraphStyle: pClose,
+        ]
+
+        // 헬퍼
+        func appendLine(_ s: String, _ attrs: [NSAttributedString.Key: Any]) {
+            out.append(NSAttributedString(string: s + "\n", attributes: attrs))
+        }
+        func appendKbd(_ key: String, _ desc: String) {
+            out.append(NSAttributedString(string: key, attributes: aKbdKey))
+            out.append(NSAttributedString(string: "\t", attributes: aKbdKey))
+            out.append(NSAttributedString(string: desc + "\n", attributes: aKbdDesc))
+        }
+
+        // ── 헤더 ──
+        appendLine("MomenTerm 사용 가이드", aTitle)
+        appendLine("처음 오신 것을 환영해요. 아래 1·2·3 순서대로 따라오면 5분이면 충분합니다.", aSubtitle)
+
+        // ── 1단계 ──
+        appendLine("1단계 — 폴더(스페이스) 만들기", aSection)
+        appendLine("여러 프로젝트를 묶어둘 ‘폴더’를 먼저 하나 만들어요. 예) PROJECTGANJI, PROJECTCFO …", aBody)
+        appendLine("1. 사이드바 위쪽의 ‘＋’ 버튼을 누릅니다.", aStep)
+        appendLine("2. 폴더 이름을 입력하고 Enter — 끝!", aStep)
+        appendLine("팁) 폴더 이름을 우클릭하면 ‘이름 변경’과 ‘삭제’를 할 수 있어요.", aTip)
+
+        // ── 2단계 ──
+        appendLine("2단계 — 프로젝트 등록하기", aSection)
+        appendLine("폴더 안에 실제 작업할 코드 폴더(=프로젝트)를 등록합니다.", aBody)
+        appendLine("1. 폴더 위에 마우스를 올리면 오른쪽 끝에 작은 ‘＋’가 살짝 나타나요. 그걸 누르거나, 폴더를 우클릭 → ‘프로젝트 생성’을 선택합니다.", aStep)
+        appendLine("2. 다음 세 가지만 채우고 ‘추가’를 누릅니다.", aStep)
+        appendLine("•  프로젝트 이름 (예: MyApp)", aBullet)
+        appendLine("•  프로젝트 경로 (‘찾아보기’ 버튼으로 폴더 선택)", aBullet)
+        appendLine("•  사용할 AI 도구 (Claude · Codex · Gemini · 로컬 LLM 중 택1)", aBullet)
+        appendLine("팁) 등록한 프로젝트를 우클릭하면 ‘편집’ · ‘복제’ · ‘세부 파일보기’ · ‘삭제’를 할 수 있어요.", aTip)
+
+        // ── 3단계 ──
+        appendLine("3단계 — 폴더 펼치고 프로젝트 열기", aSection)
+        appendLine("1. 폴더 왼쪽의 ▸ 아이콘을 누르면 그 안의 프로젝트들이 펼쳐집니다. (폴더 이름을 두 번 눌러도 펼쳐져요.)", aStep)
+        appendLine("2. 프로젝트 이름을 한 번 누르면, 그 경로에서 새 터미널 탭이 자동으로 열려요. cd 명령을 따로 칠 필요가 없습니다.", aStep)
+        appendLine("3. 같은 이름을 한 번 더 누르면 ‘세부 파일보기’ 패널이 열려, 폴더 구조와 파일 검색을 할 수 있어요.", aStep)
+
+        // ── 단축키 ──
+        appendLine("자주 쓰는 키보드 단축키", aSection)
+        appendLine("익숙해지면 마우스 없이도 빠르게 이동할 수 있어요.", aBody)
+
+        appendLine("탭 · 창 관리", aSubhead)
+        appendKbd("⌘T", "새 탭")
+        appendKbd("⌘D", "창 수직 분할")
+        appendKbd("⇧⌘D", "창 수평 분할")
+        appendKbd("⌘W", "탭 닫기")
+
+        appendLine("이동", aSubhead)
+        appendKbd("⌘1‥9", "탭 직접 선택")
+        appendKbd("⌘← / →", "탭 사이 이동")
+        appendKbd("⌘[ / ⌘]", "분할 화면 사이 이동")
+
+        appendLine("화면 조작", aSubhead)
+        appendKbd("⌘K", "화면 지우기 (버퍼 초기화)")
+        appendKbd("⌘↩", "전체 화면 전환")
+
+        appendLine("MomenTerm 전용", aSubhead)
+        appendKbd("⌘⌥O", "세부 파일보기 열기")
+        appendKbd("⌘⌥I", "모든 분할에 동시 입력")
+
+        appendLine("팁) ⚙ → ‘키보드 단축키’ 메뉴에서 언제든 다시 볼 수 있어요.", aTip)
+
+        // ── Git Graph ──
+        appendLine("Git Graph로 커밋 이력 한눈에 보기", aSection)
+        appendLine("창 맨 아래 바에 있는 ‘Git Graph’ 버튼을 누르면 현재 프로젝트의 변경 이력이 그래프로 펼쳐집니다.", aBody)
+        appendLine("•  브랜치 · 머지가 시각적으로 표시돼요.", aBullet)
+        appendLine("•  위쪽 검색창에 커밋 메시지·해시·작성자를 입력해 바로 찾을 수 있어요.", aBullet)
+        appendLine("•  패널 오른쪽 위의 ‘분리’ 아이콘을 누르면 별도 창으로 띄울 수 있습니다.", aBullet)
+
+        // ── Browser ──
+        appendLine("Browser로 결과 바로 확인하기", aSection)
+        appendLine("같은 하단 바의 ‘Browser’ 버튼을 누르면 미니 브라우저가 열려요.", aBody)
+        appendLine("•  프로젝트에서 띄운 dev 서버 URL이 자동 감지되면, 그 주소로 바로 이동합니다.", aBullet)
+        appendLine("•  ‘분리’ 버튼으로 외부 창에 띄울 수도 있어요.", aBullet)
+        appendLine("•  Git Graph와는 한 번에 하나만 보여지므로, 필요한 패널을 토글해서 사용하세요.", aBullet)
+
+        // ── 더 알아두면 좋은 팁 ──
+        appendLine("더 알아두면 좋은 팁", aSection)
+        appendLine("•  사이드바 위쪽 검색창에 이름을 입력하면 프로젝트를 바로 찾을 수 있어요.", aBullet)
+        appendLine("•  ⚙ → ‘패스키 설정’ 으로 4자리 잠금을 걸 수 있어요.", aBullet)
+        appendLine("•  새 탭(⌘T)은 현재 프로젝트 경로에서 시작돼요.", aBullet)
+        appendLine("•  막혔다면 우클릭부터! 대부분의 동작이 컨텍스트 메뉴에 모여 있어요.", aBullet)
+
+        // ── 마무리 ──
+        appendLine("이제 시작해 볼까요? 첫 폴더부터 만들고 자유롭게 둘러보세요.", aClose)
+
+        return out
     }
 
     @objc private func managePasskey() {
@@ -1114,36 +1443,29 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
 
     private func addProjectToSpaceCore(_ space: MomentermProjectSpace) {
 
-        // Build accessory view: name field + path selector + AI tool picker
-        var selectedPath: String = ""
+        // Source state — folder selection OR pending clone.
+        // Captured by reference via the picker trampoline.
+        final class SourceState {
+            var folderPath: String = ""
+            var cloneURL: String = ""
+            var cloneDestination: String = ""  // absolute path where repo will be cloned
+        }
+        let source = SourceState()
 
-        let nameLabel = NSTextField(labelWithString: "프로젝트 이름")
-        nameLabel.frame = NSRect(x: 0, y: 0, width: 260, height: 16)
-        nameLabel.font = .systemFont(ofSize: 11)
-        nameLabel.textColor = .secondaryLabelColor
-
-        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        nameField.placeholderString = "예: MyApp"
-
-        let pathLabel = NSTextField(labelWithString: "프로젝트 경로")
-        pathLabel.frame = NSRect(x: 0, y: 0, width: 260, height: 16)
+        let pathLabel = NSTextField(labelWithString: "프로젝트 소스")
         pathLabel.font = .systemFont(ofSize: 11)
         pathLabel.textColor = .secondaryLabelColor
 
-        let pathDisplay = NSTextField(labelWithString: "폴더를 선택하세요")
-        pathDisplay.frame = NSRect(x: 0, y: 0, width: 200, height: 20)
+        let pathDisplay = NSTextField(labelWithString: "폴더 또는 저장소를 선택하세요")
         pathDisplay.textColor = .secondaryLabelColor
         pathDisplay.lineBreakMode = .byTruncatingMiddle
+        pathDisplay.font = .systemFont(ofSize: 12)
 
-        let pathButton = NSButton(frame: NSRect(x: 0, y: 0, width: 90, height: 24))
-        pathButton.title = "폴더 선택..."
-        pathButton.bezelStyle = .rounded
+        let folderButton = NSButton(title: "폴더 선택", target: nil, action: nil)
+        folderButton.bezelStyle = .rounded
 
-        let pathRow = NSView(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
-        pathDisplay.frame = NSRect(x: 0, y: 2, width: 164, height: 20)
-        pathButton.frame = NSRect(x: 168, y: 0, width: 92, height: 24)
-        pathRow.addSubview(pathDisplay)
-        pathRow.addSubview(pathButton)
+        let cloneButton = NSButton(title: "저장소 복제", target: nil, action: nil)
+        cloneButton.bezelStyle = .rounded
 
         let aiLabel = NSTextField(labelWithString: "AI 도구")
         aiLabel.font = .systemFont(ofSize: 11)
@@ -1171,60 +1493,108 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
 
         // Manual frame layout (no Auto Layout — CLAUDE.md rule applies across all windows)
         // Layout bottom-up: y=0 is bottom of accessory view
-        let w: CGFloat = 260
-        modelPopup.frame  = NSRect(x: 0, y: 0,   width: w, height: 24)
-        modelLabel.frame  = NSRect(x: 0, y: 28,  width: w, height: 16)
-        statusLabel.frame = NSRect(x: 0, y: 48,  width: w, height: 14)
-        aiPopup.frame     = NSRect(x: 0, y: 68,  width: w, height: 24)
-        aiLabel.frame     = NSRect(x: 0, y: 96,  width: w, height: 16)
-        pathRow.frame     = NSRect(x: 0, y: 120, width: w, height: 24)
-        pathLabel.frame   = NSRect(x: 0, y: 148, width: w, height: 16)
-        nameField.frame   = NSRect(x: 0, y: 168, width: w, height: 24)
-        nameLabel.frame   = NSRect(x: 0, y: 196, width: w, height: 16)
+        let w: CGFloat = 280
+        modelPopup.frame   = NSRect(x: 0, y: 0,   width: w, height: 24)
+        modelLabel.frame   = NSRect(x: 0, y: 28,  width: w, height: 16)
+        statusLabel.frame  = NSRect(x: 0, y: 48,  width: w, height: 14)
+        aiPopup.frame      = NSRect(x: 0, y: 68,  width: w, height: 24)
+        aiLabel.frame      = NSRect(x: 0, y: 96,  width: w, height: 16)
+        pathDisplay.frame  = NSRect(x: 0, y: 120, width: w, height: 22)
+        let buttonRowY: CGFloat = 148
+        let buttonH: CGFloat = 26
+        let gap: CGFloat = 8
+        let btnW = (w - gap) / 2
+        folderButton.frame = NSRect(x: 0,           y: buttonRowY, width: btnW, height: buttonH)
+        cloneButton.frame  = NSRect(x: btnW + gap,  y: buttonRowY, width: btnW, height: buttonH)
+        pathLabel.frame    = NSRect(x: 0, y: buttonRowY + buttonH + 8, width: w, height: 16)
 
-        let accessoryH: CGFloat = 212
+        let accessoryH: CGFloat = buttonRowY + buttonH + 8 + 16 + 4
         let stack = NSView(frame: NSRect(x: 0, y: 0, width: w, height: accessoryH))
         stack.addSubview(modelPopup)
         stack.addSubview(modelLabel)
         stack.addSubview(statusLabel)
         stack.addSubview(aiPopup)
         stack.addSubview(aiLabel)
-        stack.addSubview(pathRow)
+        stack.addSubview(pathDisplay)
+        stack.addSubview(folderButton)
+        stack.addSubview(cloneButton)
         stack.addSubview(pathLabel)
-        stack.addSubview(nameField)
-        stack.addSubview(nameLabel)
 
-        let openPanel = NSOpenPanel()
-        openPanel.canChooseFiles = false
-        openPanel.canChooseDirectories = true
-        openPanel.allowsMultipleSelection = false
-        openPanel.prompt = "선택"
-
-        let pathDisplayRef = pathDisplay
         let alert = NSAlert()
         alert.messageText = "\u{201C}\(space.name)\u{201D}에 프로젝트 추가"
         alert.addButton(withTitle: "추가")
         alert.addButton(withTitle: "취소")
         alert.accessoryView = stack
 
-        // NSAlert runs a nested event loop; use a trampoline NSObject so the path button
-        // can open NSOpenPanel from within the running modal loop.
-        final class PathPickerTarget: NSObject {
-            var handler: () -> Void = {}
-            @objc func pick(_ sender: Any) { handler() }
+        // NSAlert runs a nested event loop; use a trampoline NSObject so the source
+        // buttons can open NSOpenPanel / nested input from within the running modal.
+        final class SourcePickerTarget: NSObject {
+            var folderHandler: () -> Void = {}
+            var cloneHandler: () -> Void = {}
+            @objc func folderTapped(_ sender: Any) { folderHandler() }
+            @objc func cloneTapped(_ sender: Any) { cloneHandler() }
         }
-        let picker = PathPickerTarget()
-        picker.handler = {
-            if openPanel.runModal() == .OK, let url = openPanel.url {
-                selectedPath = url.path
-                pathDisplayRef.stringValue = (url.path as NSString).abbreviatingWithTildeInPath
-                pathDisplayRef.textColor = .labelColor
+        let picker = SourcePickerTarget()
+        weak var weakDisplay = pathDisplay
+        picker.folderHandler = {
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "선택"
+            if panel.runModal() == .OK, let url = panel.url {
+                source.folderPath = url.path
+                source.cloneURL = ""
+                source.cloneDestination = ""
+                weakDisplay?.stringValue = (url.path as NSString).abbreviatingWithTildeInPath
+                weakDisplay?.textColor = .labelColor
             }
         }
-        pathButton.target = picker
-        pathButton.action = #selector(PathPickerTarget.pick(_:))
+        picker.cloneHandler = { [weak self] in
+            guard let self = self else { return }
+            let urlAlert = NSAlert()
+            urlAlert.messageText = "저장소 복제"
+            urlAlert.informativeText = "복제할 저장소 URL을 입력하세요."
+            urlAlert.addButton(withTitle: "다음")
+            urlAlert.addButton(withTitle: "취소")
+            let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+            tf.placeholderString = "https://github.com/user/repo.git"
+            urlAlert.accessoryView = tf
+            guard urlAlert.runModal() == .alertFirstButtonReturn else { return }
+            let raw = tf.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !raw.isEmpty else { return }
+            guard let repoName = self.parseRepoName(from: raw) else {
+                self.showSimpleAlert(messageText: "URL을 확인해 주세요",
+                                     informativeText: "저장소 이름을 추출할 수 없습니다.")
+                return
+            }
+            let panel = NSOpenPanel()
+            panel.canChooseFiles = false
+            panel.canChooseDirectories = true
+            panel.allowsMultipleSelection = false
+            panel.prompt = "이 위치에 복제"
+            panel.message = "이 폴더 안에 ‘\(repoName)’이(가) 복제됩니다."
+            guard panel.runModal() == .OK, let parent = panel.url else { return }
+            let dest = parent.appendingPathComponent(repoName)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                self.showSimpleAlert(messageText: "이미 같은 이름의 폴더가 있습니다",
+                                     informativeText: "‘\(dest.path)’ 위치에 이미 폴더가 존재합니다.")
+                return
+            }
+            source.folderPath = ""
+            source.cloneURL = raw
+            source.cloneDestination = dest.path
+            let abbrev = (dest.path as NSString).abbreviatingWithTildeInPath
+            weakDisplay?.stringValue = "\(raw)\n→ \(abbrev)"
+            weakDisplay?.textColor = .labelColor
+            weakDisplay?.maximumNumberOfLines = 2
+            weakDisplay?.lineBreakMode = .byTruncatingMiddle
+        }
+        folderButton.target = picker
+        folderButton.action = #selector(SourcePickerTarget.folderTapped(_:))
+        cloneButton.target = picker
+        cloneButton.action = #selector(SourcePickerTarget.cloneTapped(_:))
 
-        // Keep picker alive during the modal loop via a stored property
         _retainedPathPicker = picker
 
         guard alert.runModal() == .alertFirstButtonReturn else {
@@ -1234,22 +1604,45 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         }
         _retainedPathPicker = nil
 
-        let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty else {
-            _retainedAITrampoline = nil
-            return
-        }
-
         let aiTool = trampoline.selectedTool()
         let backend = trampoline.selectedBackend()
         let model = trampoline.selectedModel()
         _retainedAITrampoline = nil
 
-        var project = MomentermProject(name: name, path: selectedPath, aiTool: aiTool)
-        project.localLLMBackend = backend
-        project.localLLMModel = model
-        MomentermProjectStorage.shared.addProject(project, toSpace: space.id)
-        reloadData()
+        // Resolve final project name + path based on which source mode was used.
+        if !source.folderPath.isEmpty {
+            let url = URL(fileURLWithPath: source.folderPath)
+            let projectName = url.lastPathComponent
+            var project = MomentermProject(name: projectName,
+                                           path: source.folderPath,
+                                           aiTool: aiTool)
+            project.localLLMBackend = backend
+            project.localLLMModel = model
+            MomentermProjectStorage.shared.addProject(project, toSpace: space.id)
+            reloadData()
+        } else if !source.cloneURL.isEmpty && !source.cloneDestination.isEmpty {
+            let dest = URL(fileURLWithPath: source.cloneDestination)
+            let projectName = dest.lastPathComponent
+            runGitClone(url: source.cloneURL, destination: dest) { [weak self] success, stderr in
+                guard let self = self else { return }
+                if success {
+                    var project = MomentermProject(name: projectName,
+                                                   path: dest.path,
+                                                   aiTool: aiTool)
+                    project.localLLMBackend = backend
+                    project.localLLMModel = model
+                    MomentermProjectStorage.shared.addProject(project, toSpace: space.id)
+                    self.reloadData()
+                } else {
+                    let detail = stderr?.isEmpty == false ? stderr! : "알 수 없는 오류"
+                    self.showSimpleAlert(messageText: "저장소 복제에 실패했습니다",
+                                         informativeText: detail)
+                }
+            }
+        } else {
+            showSimpleAlert(messageText: "프로젝트 소스를 선택해 주세요",
+                            informativeText: "‘폴더 선택’ 또는 ‘저장소 복제’ 중 하나를 사용해 프로젝트 소스를 지정해야 합니다.")
+        }
     }
 
     @objc private func deleteSpace(_ sender: NSMenuItem) {
@@ -1608,5 +2001,176 @@ private struct AIIconSpec {
                               symbolName: "terminal.fill",
                               tint: .secondaryLabelColor)
         }
+    }
+}
+
+// MARK: - Workspace creation (Open Folder / Clone Repository)
+
+extension MomentermEmbeddedSidebarVC {
+
+    fileprivate func openFolderAsWorkspace() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "워크스페이스로 열기"
+        panel.message = "워크스페이스로 사용할 폴더를 선택하세요."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard validateAsWorkspace(folderURL: url) else { return }
+        createWorkspaceFromFolder(folderURL: url, additionalProject: nil)
+    }
+
+    fileprivate func cloneRepositoryAsWorkspace() {
+        let urlAlert = NSAlert()
+        urlAlert.messageText = "저장소 복제"
+        urlAlert.informativeText = "저장소 URL을 입력하거나 원격 소스를 선택하세요."
+        urlAlert.addButton(withTitle: "다음")
+        urlAlert.addButton(withTitle: "취소")
+        let tf = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        tf.placeholderString = "https://github.com/user/repo.git"
+        urlAlert.accessoryView = tf
+        guard urlAlert.runModal() == .alertFirstButtonReturn else { return }
+        let raw = tf.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return }
+        guard let repoName = parseRepoName(from: raw) else {
+            showSimpleAlert(messageText: "URL을 확인해 주세요",
+                            informativeText: "저장소 이름을 추출할 수 없습니다.")
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "이 위치에 복제"
+        panel.message = "이 폴더가 워크스페이스가 되고, 그 안에 ‘\(repoName)’이(가) 복제됩니다."
+        guard panel.runModal() == .OK, let parentURL = panel.url else { return }
+        guard validateAsWorkspace(folderURL: parentURL) else { return }
+
+        let destination = parentURL.appendingPathComponent(repoName)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            showSimpleAlert(messageText: "이미 같은 이름의 폴더가 있습니다",
+                            informativeText: "‘\(destination.path)’ 위치에 이미 폴더가 존재해 복제할 수 없습니다.")
+            return
+        }
+
+        runGitClone(url: raw, destination: destination) { [weak self] success, stderr in
+            guard let self = self else { return }
+            if success {
+                let cloned = MomentermProject(name: repoName,
+                                              path: destination.path,
+                                              aiTool: .claudeCode)
+                self.createWorkspaceFromFolder(folderURL: parentURL,
+                                               additionalProject: cloned)
+            } else {
+                let detail = stderr?.isEmpty == false ? stderr! : "알 수 없는 오류"
+                self.showSimpleAlert(messageText: "저장소 복제에 실패했습니다",
+                                     informativeText: detail)
+            }
+        }
+    }
+
+    fileprivate func validateAsWorkspace(folderURL: URL) -> Bool {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let gitPath = folderURL.appendingPathComponent(".git").path
+        let gitignorePath = folderURL.appendingPathComponent(".gitignore").path
+        let hasGit = fm.fileExists(atPath: gitPath, isDirectory: &isDir) && isDir.boolValue
+        let hasGitignore = fm.fileExists(atPath: gitignorePath)
+        if hasGit || hasGitignore {
+            showSimpleAlert(messageText: "워크스페이스로 추가할 수 없습니다",
+                            informativeText: "프로젝트 파일은 ‘워크스페이스’로 추가할 수 없습니다. 워크스페이스 하위 프로젝트로 생성해 주세요.")
+            return false
+        }
+        return true
+    }
+
+    /// Creates a workspace named after `folderURL.lastPathComponent`, then
+    /// registers every immediate subfolder as a project. Optionally also adds
+    /// `additionalProject` (used by Clone flow when the repo was just cloned).
+    fileprivate func createWorkspaceFromFolder(folderURL: URL,
+                                               additionalProject: MomentermProject?) {
+        let spaceName = folderURL.lastPathComponent
+        let space = MomentermProjectStorage.shared.addSpace(named: spaceName)
+
+        let fm = FileManager.default
+        let contents = (try? fm.contentsOfDirectory(at: folderURL,
+                                                    includingPropertiesForKeys: [.isDirectoryKey],
+                                                    options: [.skipsHiddenFiles])) ?? []
+        let subfolders = contents
+            .filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+            }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+
+        for sub in subfolders {
+            if let extra = additionalProject,
+               (sub.path as NSString).standardizingPath == (extra.path as NSString).standardizingPath {
+                continue
+            }
+            let project = MomentermProject(name: sub.lastPathComponent,
+                                           path: sub.path,
+                                           aiTool: .claudeCode)
+            MomentermProjectStorage.shared.addProject(project, toSpace: space.id)
+        }
+
+        if let extra = additionalProject {
+            MomentermProjectStorage.shared.addProject(extra, toSpace: space.id)
+        }
+
+        reloadData()
+        outlineView.expandItem(nil, expandChildren: true)
+    }
+
+    private func parseRepoName(from urlString: String) -> String? {
+        var s = urlString.trimmingCharacters(in: .whitespaces)
+        if s.hasSuffix("/") { s.removeLast() }
+        if s.hasSuffix(".git") { s = String(s.dropLast(4)) }
+        let lastSlash = s.lastIndex(of: "/") ?? s.lastIndex(of: ":")
+        let name: String
+        if let idx = lastSlash {
+            name = String(s[s.index(after: idx)...])
+        } else {
+            name = s
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func runGitClone(url: String,
+                             destination: URL,
+                             completion: @escaping (Bool, String?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            task.arguments = ["clone", url, destination.path]
+            let errPipe = Pipe()
+            task.standardError = errPipe
+            task.standardOutput = Pipe()
+            var success = false
+            var stderr = ""
+            do {
+                try task.run()
+                task.waitUntilExit()
+                let data = errPipe.fileHandleForReading.readDataToEndOfFile()
+                stderr = String(data: data, encoding: .utf8) ?? ""
+                success = task.terminationStatus == 0
+            } catch {
+                stderr = error.localizedDescription
+            }
+            DispatchQueue.main.async {
+                completion(success, success ? nil : stderr)
+            }
+        }
+    }
+
+    private func showSimpleAlert(messageText: String, informativeText: String) {
+        let alert = NSAlert()
+        alert.messageText = messageText
+        alert.informativeText = informativeText
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "확인")
+        alert.runModal()
     }
 }

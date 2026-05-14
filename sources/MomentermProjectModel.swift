@@ -168,7 +168,7 @@ struct MomentermProjectStore: Codable {
     var spaces: [MomentermProjectSpace]
 
     init() {
-        self.spaces = [MomentermProjectSpace(name: "Default")]
+        self.spaces = []
     }
 
     var allProjects: [MomentermProject] {

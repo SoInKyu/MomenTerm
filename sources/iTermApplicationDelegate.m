@@ -2259,23 +2259,9 @@ static iTermKeyEventReplayer *gReplayer;
                 [updated setObject:nerdFontDesc forKey:KEY_NORMAL_FONT];
                 [[ProfileModel sharedInstance] setBookmark:updated withGuid:defaultProfile[KEY_GUID]];
                 [[ProfileModel sharedInstance] flush];
-                // Mark done only after successful migration
-                [[iTermUserDefaults userDefaults] setBool:YES forKey:fontMigrationKey];
-            } else {
-                // No Nerd Font found — show a one-time install hint (retry next launch)
-                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2.0 * NSEC_PER_SEC)),
-                               dispatch_get_main_queue(), ^{
-                    NSAlert *alert = [[NSAlert alloc] init];
-                    alert.messageText = @"Nerd Font을 설치해 주세요";
-                    alert.informativeText =
-                        @"터미널 프롬프트 아이콘(파워라인 심벌)을 표시하려면 Nerd Font가 필요합니다.\n\n"
-                        @"권장: MesloLGS NF (p10k 기본)\n"
-                        @"또는 D2Coding Nerd Font\n\n"
-                        @"설치 후 MomenTerm을 재실행하면 자동으로 적용됩니다.";
-                    [alert addButtonWithTitle:@"확인"];
-                    [alert runModal];
-                });
             }
+            // Mark done unconditionally — never prompt the user about fonts on launch.
+            [[iTermUserDefaults userDefaults] setBool:YES forKey:fontMigrationKey];
         }
     }
 
