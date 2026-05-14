@@ -1563,11 +1563,11 @@ void TurnOnDebugLoggingAutomatically(void) {
     // MomenTerm: register defaults (must run before any keyboard input)
     [[iTermUserDefaults userDefaults] registerDefaults:@{@"MomentermSingleEnterCommitsIME": @YES}];
 
-    // MomenTerm: add project manager + plugin marketplace + browser panel entries to the Window menu
+    // MomenTerm: add project manager + plugin marketplace + browser entries to the Window menu
     NSMenu *windowsMenu = [NSApp windowsMenu];
     if (windowsMenu) {
-        NSMenuItem *browserItem = [[[NSMenuItem alloc] initWithTitle:@"Toggle Browser Panel"
-                                                              action:@selector(toggleMomentermBrowserPanel:)
+        NSMenuItem *browserItem = [[[NSMenuItem alloc] initWithTitle:@"Open in Browser"
+                                                              action:@selector(openMomentermInferredURLInSystemBrowser:)
                                                        keyEquivalent:@"b"] autorelease];
         browserItem.keyEquivalentModifierMask = NSEventModifierFlagCommand | NSEventModifierFlagOption;
 

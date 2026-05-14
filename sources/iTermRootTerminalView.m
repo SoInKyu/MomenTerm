@@ -177,14 +177,13 @@ NS_CLASS_AVAILABLE_MAC(10_14)
     NSView *_momentermFileTreeContainer;
     CGFloat _momentermFileTreeWidth;
 
-    // MomenTerm: right-side inline panels (browser, git graph) — mutually exclusive,
-    // each occupies ~50% of the available terminal width when visible.
-    BOOL _shouldShowMomentermBrowserPanel;
-    NSView *_momentermBrowserPanelContainer;
-    CGFloat _momentermBrowserPanelWidth;  // legacy default; layout overrides with 50%
-
+    // MomenTerm: right-side inline panels (git graph, file editor) — mutually
+    // exclusive, each occupies ~50% of the available terminal width when visible.
     BOOL _shouldShowMomentermGitGraphPanel;
     NSView *_momentermGitGraphPanelContainer;
+
+    BOOL _shouldShowMomentermFileEditorPanel;
+    NSView *_momentermFileEditorPanelContainer;
 
     // MomenTerm: full-width slim bar pinned to the bottom of the window
     NSView *_momentermBottomStripContainer;
@@ -1297,38 +1296,6 @@ NS_CLASS_AVAILABLE_MAC(10_14)
     return _momentermFileTreeWidth > 0 ? _momentermFileTreeWidth : 240.0;
 }
 
-- (void)setShouldShowMomentermBrowserPanel:(BOOL)show {
-    _shouldShowMomentermBrowserPanel = show;
-    _momentermBrowserPanelContainer.hidden = !show;
-    [self layoutSubviews];
-}
-
-- (BOOL)shouldShowMomentermBrowserPanel {
-    return _shouldShowMomentermBrowserPanel;
-}
-
-- (void)setMomentermBrowserPanelContainer:(NSView *)container {
-    [_momentermBrowserPanelContainer removeFromSuperview];
-    _momentermBrowserPanelContainer = container;
-    if (_momentermBrowserPanelContainer) {
-        _momentermBrowserPanelContainer.hidden = !_shouldShowMomentermBrowserPanel;
-        [self addSubview:_momentermBrowserPanelContainer positioned:NSWindowAbove relativeTo:nil];
-    }
-    [self layoutSubviews];
-}
-
-- (NSView *)momentermBrowserPanelContainer {
-    return _momentermBrowserPanelContainer;
-}
-
-- (void)setMomentermBrowserPanelWidth:(CGFloat)w {
-    _momentermBrowserPanelWidth = w;
-}
-
-- (CGFloat)momentermBrowserPanelWidth {
-    return _momentermBrowserPanelWidth > 0 ? _momentermBrowserPanelWidth : 420.0;
-}
-
 // --- Git Graph right-side panel ---
 
 - (void)setShouldShowMomentermGitGraphPanel:(BOOL)show {
@@ -1353,6 +1320,32 @@ NS_CLASS_AVAILABLE_MAC(10_14)
 
 - (NSView *)momentermGitGraphPanelContainer {
     return _momentermGitGraphPanelContainer;
+}
+
+// --- File editor right-side panel ---
+
+- (void)setShouldShowMomentermFileEditorPanel:(BOOL)show {
+    _shouldShowMomentermFileEditorPanel = show;
+    _momentermFileEditorPanelContainer.hidden = !show;
+    [self layoutSubviews];
+}
+
+- (BOOL)shouldShowMomentermFileEditorPanel {
+    return _shouldShowMomentermFileEditorPanel;
+}
+
+- (void)setMomentermFileEditorPanelContainer:(NSView *)container {
+    [_momentermFileEditorPanelContainer removeFromSuperview];
+    _momentermFileEditorPanelContainer = container;
+    if (_momentermFileEditorPanelContainer) {
+        _momentermFileEditorPanelContainer.hidden = !_shouldShowMomentermFileEditorPanel;
+        [self addSubview:_momentermFileEditorPanelContainer positioned:NSWindowAbove relativeTo:nil];
+    }
+    [self layoutSubviews];
+}
+
+- (NSView *)momentermFileEditorPanelContainer {
+    return _momentermFileEditorPanelContainer;
 }
 
 // --- Bottom strip ---
@@ -1381,9 +1374,9 @@ NS_CLASS_AVAILABLE_MAC(10_14)
 - (void)layoutMomentermSidebar {
     const BOOL leftActive = _momentermSidebarContainer && _shouldShowMomentermSidebar;
     const BOOL bottomActive = _momentermBottomStripContainer != nil;
-    const BOOL browserActive = _momentermBrowserPanelContainer && _shouldShowMomentermBrowserPanel;
     const BOOL gitGraphActive = _momentermGitGraphPanelContainer && _shouldShowMomentermGitGraphPanel;
-    if (!leftActive && !bottomActive && !browserActive && !gitGraphActive) {
+    const BOOL fileEditorActive = _momentermFileEditorPanelContainer && _shouldShowMomentermFileEditorPanel;
+    if (!leftActive && !bottomActive && !gitGraphActive && !fileEditorActive) {
         return;
     }
     const CGFloat windowW = NSWidth(self.bounds);
@@ -1417,14 +1410,14 @@ NS_CLASS_AVAILABLE_MAC(10_14)
     // Right-side inline panels are mutually exclusive; each takes 50% of the
     // available terminal area when shown so the user keeps a usable terminal
     // strip on the left.
-    const CGFloat rightPanelW = (browserActive || gitGraphActive) ? floor(availableW * 0.5) : 0;
-    if (browserActive) {
-        const CGFloat panelX = windowW - toolbeltW - rightPanelW;
-        _momentermBrowserPanelContainer.frame = NSMakeRect(panelX, sidesY, rightPanelW, sidesH);
-    }
+    const CGFloat rightPanelW = (gitGraphActive || fileEditorActive) ? floor(availableW * 0.5) : 0;
     if (gitGraphActive) {
         const CGFloat panelX = windowW - toolbeltW - rightPanelW;
         _momentermGitGraphPanelContainer.frame = NSMakeRect(panelX, sidesY, rightPanelW, sidesH);
+    }
+    if (fileEditorActive) {
+        const CGFloat panelX = windowW - toolbeltW - rightPanelW;
+        _momentermFileEditorPanelContainer.frame = NSMakeRect(panelX, sidesY, rightPanelW, sidesH);
     }
 
     const CGFloat maxRight = windowW - toolbeltW - rightPanelW;

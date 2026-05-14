@@ -248,8 +248,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     iTermToolbeltViewDelegate,
     MomentermEmbeddedSidebarDelegate,
     MomentermEmbeddedFileTreeDelegate,
-    MomentermBrowserPanelDelegate,
     MomentermGitGraphPanelDelegate,
+    MomentermFileEditorPanelDelegate,
     MomentermBottomStripDelegate,
     NSComboBoxDelegate,
     NSFontChanging,
@@ -446,11 +446,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     MomentermFileTreeVC *_momentermFileTreeVC;
     NSString *_momentermFileTreePath;
 
-    // MomenTerm: editor overlay
-    MomentermEditorOverlayVC *_momentermEditorVC;
-
-    // MomenTerm: right-side localhost preview browser panel
-    MomentermBrowserPanelVC *_momentermBrowserPanelVC;
+    // MomenTerm: right-side inline file editor (replaces the old full-tabView overlay)
+    MomentermFileEditorPanelVC *_momentermFileEditorVC;
 
     // MomenTerm: right-side inline Git Graph panel
     MomentermGitGraphPanelVC *_momentermGitGraphPanelVC;
@@ -459,8 +456,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     MomentermBottomStripView *_momentermBottomStripView;
 
     // MomenTerm: floating windows that host the inline panels when detached
-    NSWindow *_momentermBrowserDetachedWindow;
     NSWindow *_momentermGitGraphDetachedWindow;
+    NSWindow *_momentermFileEditorDetachedWindow;
 
 }
 
@@ -765,17 +762,18 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     _contentView.shouldShowMomentermSidebar = YES;
     [self performSelector:@selector(it_setupMomentermToggleButton) withObject:nil afterDelay:0];
 
-    // MomenTerm: lazily-shown right-side browser panel that follows localhost URLs.
-    _momentermBrowserPanelVC = [[MomentermBrowserPanelVC alloc] init];
-    _momentermBrowserPanelVC.delegate = self;
-    _contentView.momentermBrowserPanelContainer = _momentermBrowserPanelVC.view;
-    _contentView.shouldShowMomentermBrowserPanel = NO;
-
     // MomenTerm: right-side inline Git Graph panel (mutually exclusive with browser).
     _momentermGitGraphPanelVC = [[MomentermGitGraphPanelVC alloc] init];
     _momentermGitGraphPanelVC.delegate = self;
     _contentView.momentermGitGraphPanelContainer = _momentermGitGraphPanelVC.view;
     _contentView.shouldShowMomentermGitGraphPanel = NO;
+
+    // MomenTerm: right-side inline file editor panel (mutually exclusive with the
+    // other right-side panels). Single persistent VC; file clicks call setFileURL:.
+    _momentermFileEditorVC = [[MomentermFileEditorPanelVC alloc] init];
+    _momentermFileEditorVC.delegate = self;
+    _contentView.momentermFileEditorPanelContainer = _momentermFileEditorVC.view;
+    _contentView.shouldShowMomentermFileEditorPanel = NO;
 
     // MomenTerm: bottom strip hosting the Git Graph / Browser toggle buttons.
     _momentermBottomStripView = [[MomentermBottomStripView alloc] initWithFrame:NSZeroRect];
@@ -1167,42 +1165,34 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [self it_updateMomentermToggleButtonAppearance];
 }
 
-- (IBAction)toggleMomentermBrowserPanel:(id)sender {
-    [self it_setMomentermRightPanel:@"browser"];
-}
-
-// MARK: - MomentermBrowserPanelDelegate
-
-- (NSString *)momentermBrowserPanelActiveSessionGUID {
-    return [self currentSession].guid;
-}
-
 - (IBAction)toggleMomentermGitGraph:(id)sender {
     [self it_setMomentermRightPanel:@"gitgraph"];
 }
 
-// Toggles which inline panel (browser or gitgraph) occupies the right half
-// of the terminal area. Panels are mutually exclusive — activating one
-// hides the other. Passing the currently-active name toggles it off.
+- (IBAction)openMomentermInferredURLInSystemBrowser:(id)sender {
+    [self it_openInferredLocalhostURLInSystemBrowser];
+}
+
+// Toggles which inline panel (gitgraph, fileeditor) occupies the right half
+// of the terminal area. Panels are mutually exclusive — activating one hides
+// the others. Passing the currently-active name toggles it off.
 - (void)it_setMomentermRightPanel:(NSString *)panel {
-    const BOOL browserOn = _contentView.shouldShowMomentermBrowserPanel;
     const BOOL graphOn = _contentView.shouldShowMomentermGitGraphPanel;
-    if ([panel isEqualToString:@"browser"]) {
-        const BOOL show = !browserOn;
-        _contentView.shouldShowMomentermGitGraphPanel = NO;
-        _contentView.shouldShowMomentermBrowserPanel = show;
-        if (show) {
-            [self it_pickAndLoadLocalhostURLForBrowser];
-        }
-        [_momentermBottomStripView setActivePanel:show ? @"browser" : @""];
-    } else if ([panel isEqualToString:@"gitgraph"]) {
+    const BOOL editorOn = _contentView.shouldShowMomentermFileEditorPanel;
+    if ([panel isEqualToString:@"gitgraph"]) {
         const BOOL show = !graphOn;
-        _contentView.shouldShowMomentermBrowserPanel = NO;
+        _contentView.shouldShowMomentermFileEditorPanel = NO;
         _contentView.shouldShowMomentermGitGraphPanel = show;
         if (show) {
             [self it_updateMomentermGitGraphCwd];
         }
         [_momentermBottomStripView setActivePanel:show ? @"gitgraph" : @""];
+    } else if ([panel isEqualToString:@"fileeditor"]) {
+        const BOOL show = !editorOn;
+        _contentView.shouldShowMomentermGitGraphPanel = NO;
+        _contentView.shouldShowMomentermFileEditorPanel = show;
+        // No bottom-strip button corresponds to the editor — clear the highlight.
+        [_momentermBottomStripView setActivePanel:@""];
     }
     [self it_refitAllSessionsAfterMomentermLayoutChange];
 }
@@ -1218,8 +1208,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     }
 }
 
-// Decides which localhost URL — if any — to open in the browser panel.
-// Strategy:
+// Returns ranked localhost URL candidates seen in the active session's last
+// ~400 lines plus the live per-character scanner. Strategy:
 //   1. Pull candidates from the per-character live scanner (lastURLForSession:)
 //      plus a screen scan covering the last ~400 lines so TUI repaints
 //      (Claude Code, ink, blessed) are caught even when the append hook
@@ -1227,27 +1217,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 //   2. Score each URL against its line context using keyword heuristics:
 //      "front"/"main"/"진입점" boost, "api"/"backend"/"/health" penalize,
 //      "postgres"/"db:" heavily penalize.
-//   3. If one candidate clearly leads (>=20 pts), load it silently.
-//      Otherwise present a sheet-modal NSAlert with one button per URL so
-//      the user picks. 0 candidates → leave the panel empty (placeholder).
-- (void)it_pickAndLoadLocalhostURLForBrowser {
-    NSArray<NSDictionary *> *ranked = [self it_rankedLocalhostURLCandidates];
-    if (ranked.count == 0) {
-        return;
-    }
-    if (ranked.count == 1) {
-        [_momentermBrowserPanelVC loadURLString:ranked[0][@"url"]];
-        return;
-    }
-    const NSInteger topScore = [ranked[0][@"score"] integerValue];
-    const NSInteger runnerScore = [ranked[1][@"score"] integerValue];
-    if (topScore - runnerScore >= 20) {
-        [_momentermBrowserPanelVC loadURLString:ranked[0][@"url"]];
-        return;
-    }
-    [self it_presentURLPicker:ranked];
-}
-
+// Consumer (`it_openInferredLocalhostURLInSystemBrowser`) decides what to do
+// with the ranking.
 - (NSArray<NSDictionary *> *)it_rankedLocalhostURLCandidates {
     PTYSession *session = [self currentSession];
     if (!session || !session.screen) {
@@ -1282,12 +1253,32 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     }
 
     NSMutableDictionary<NSString *, NSMutableDictionary *> *byURL = [NSMutableDictionary dictionary];
-    for (NSString *line in lines) {
+    for (NSInteger i = 0; i < (NSInteger)lines.count; i++) {
+        NSString *line = lines[i];
         if (line.length == 0) continue;
         NSArray<NSTextCheckingResult *> *matches = [rx matchesInString:line options:0 range:NSMakeRange(0, line.length)];
         for (NSTextCheckingResult *m in matches) {
             NSString *url = [line substringWithRange:m.range];
-            const NSInteger score = [self it_scoreForURL:url inLine:line];
+            NSInteger score = [self it_scoreForURL:url inLine:line];
+            // If the URL's own line gives no signal (typical when the label
+            // is on its own line above the URL, e.g. "프론트엔드:\n  http://…"),
+            // fall back to the previous non-empty line for context-only keyword
+            // hits. We isolate this from the URL line so adjacent unrelated URLs
+            // never cross-contaminate each other's scores.
+            if (score == 0 && i > 0) {
+                NSInteger prevIdx = i - 1;
+                while (prevIdx >= 0 && [lines[prevIdx] length] == 0) prevIdx--;
+                if (prevIdx >= 0) {
+                    const NSInteger prevScore = [self it_scoreForURL:url inLine:lines[prevIdx]];
+                    // Only the keyword half of the score is meaningful from a
+                    // non-URL line; the URL path/port boosts are already
+                    // counted from the URL line. Take the prev-line score only
+                    // if it's a clear keyword signal.
+                    if (prevScore >= 30 || prevScore <= -20) {
+                        score = prevScore;
+                    }
+                }
+            }
             NSString *context = [self it_summarizeContextForLine:line urlRange:m.range];
             NSMutableDictionary *existing = byURL[url];
             if (existing == nil || [existing[@"score"] integerValue] < score) {
@@ -1319,6 +1310,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     NSInteger score = 0;
 
     NSArray<NSString *> *front = @[@"front", @"frontend", @"메인", @"main", @"진입점",
+                                   @"프론트엔드", @"프런트엔드", @"프론트", @"프런트",
+                                   @"메인 페이지", @"메인페이지", @"홈페이지",
                                    @"next.js", @"next", @"react", @"vite", @"vue",
                                    @"svelte", @"webpack", @"angular", @"dev server",
                                    @"ui", @"client", @"기본 진입점"];
@@ -1327,7 +1320,9 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     }
 
     NSArray<NSString *> *back = @[@"back", @"backend", @"api server", @" gin", @"fastapi",
-                                  @"express", @"go/gin", @"go-gin", @"helm", @"swagger"];
+                                  @"express", @"go/gin", @"go-gin", @"helm", @"swagger",
+                                  @"백엔드", @"백 엔드", @"백앤드",
+                                  @"api 서버", @"api서버", @"백엔드 api"];
     for (NSString *kw in back) {
         if ([l containsString:kw]) score -= 20;
     }
@@ -1345,13 +1340,23 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
     // URL path hints.
     if ([u containsString:@"/api/"]) score -= 30;
+    if ([u hasSuffix:@"/api"]) score -= 30;
     if ([u containsString:@"/health"]) score -= 30;
     if ([u containsString:@"/swagger"]) score -= 20;
     if ([u containsString:@"/graphql"]) score -= 10;
+    if ([u containsString:@"/docs"]) score -= 10;
 
-    // Common FE dev-server ports nudge upward.
-    NSArray<NSString *> *fePorts = @[@":3000", @":3300", @":3333", @":4200", @":5173", @":5174",
-                                     @":8080", @":8000", @":4321", @":1313"];
+    // Root URLs (no path or just "/") are almost always frontend entry points.
+    NSURL *parsed = [NSURL URLWithString:url];
+    NSString *path = parsed.path ?: @"";
+    if (path.length == 0 || [path isEqualToString:@"/"]) {
+        score += 20;
+    }
+
+    // Common FE dev-server ports nudge upward. Note: :8000 / :8080 are excluded
+    // because they are far more often backend (Django/FastAPI/Express/Spring).
+    NSArray<NSString *> *fePorts = @[@":3000", @":3001", @":3300", @":3333", @":4200",
+                                     @":5173", @":5174", @":4321", @":1313", @":8888"];
     for (NSString *p in fePorts) {
         if ([u containsString:p]) {
             score += 10;
@@ -1385,10 +1390,68 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     return [out stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 }
 
-- (void)it_presentURLPicker:(NSArray<NSDictionary *> *)candidates {
+- (void)it_updateMomentermGitGraphCwd {
+    if (!_contentView.shouldShowMomentermGitGraphPanel) {
+        return;
+    }
+    NSString *cwd = [[self currentSession] currentLocalWorkingDirectory];
+    if (cwd.length == 0) {
+        cwd = NSHomeDirectory();
+    }
+    [_momentermGitGraphPanelVC setCwd:cwd];
+}
+
+// MARK: - MomentermBottomStripDelegate
+
+- (void)momentermBottomStripDidTapGitGraph {
+    [self it_setMomentermRightPanel:@"gitgraph"];
+}
+
+- (void)momentermBottomStripDidTapBrowser {
+    [self it_openInferredLocalhostURLInSystemBrowser];
+}
+
+// Infers a frontend URL from the active session's terminal output and opens
+// it in the user's default browser. Unlike the old inline panel, this never
+// toggles any window-internal view.
+//
+// 0 candidates → informational alert.
+// 1 candidate, or top score beats runner-up by ≥20 → open silently.
+// Otherwise → sheet-modal picker; user's choice opens externally.
+- (void)it_openInferredLocalhostURLInSystemBrowser {
+    NSArray<NSDictionary *> *ranked = [self it_rankedLocalhostURLCandidates];
+    if (ranked.count == 0) {
+        NSAlert *alert = [[[NSAlert alloc] init] autorelease];
+        alert.messageText = @"열 수 있는 URL을 찾지 못했습니다";
+        alert.informativeText = @"터미널 출력에서 http(s)://localhost 형태의 주소를 찾지 못했어요. 개발 서버를 실행한 뒤 다시 시도해 주세요.";
+        alert.alertStyle = NSAlertStyleInformational;
+        [alert beginSheetModalForWindow:self.window completionHandler:nil];
+        return;
+    }
+    if (ranked.count == 1) {
+        [self it_openURLStringInSystemBrowser:ranked[0][@"url"]];
+        return;
+    }
+    const NSInteger topScore = [ranked[0][@"score"] integerValue];
+    const NSInteger runnerScore = [ranked[1][@"score"] integerValue];
+    if (topScore - runnerScore >= 20) {
+        [self it_openURLStringInSystemBrowser:ranked[0][@"url"]];
+        return;
+    }
+    [self it_presentURLPickerForSystemBrowser:ranked];
+}
+
+- (void)it_openURLStringInSystemBrowser:(NSString *)urlString {
+    NSURL *url = [NSURL URLWithString:urlString];
+    if (url) {
+        [[NSWorkspace sharedWorkspace] openURL:url];
+    }
+}
+
+- (void)it_presentURLPickerForSystemBrowser:(NSArray<NSDictionary *> *)candidates {
     NSAlert *alert = [[[NSAlert alloc] init] autorelease];
     alert.messageText = @"여러 개의 로컬 주소가 보입니다";
-    alert.informativeText = @"브라우저에 띄울 URL을 선택하세요.";
+    alert.informativeText = @"기본 브라우저에서 열 URL을 선택하세요.";
     alert.alertStyle = NSAlertStyleInformational;
 
     const NSUInteger cap = 6;
@@ -1410,47 +1473,12 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
         const NSInteger idx = response - NSAlertFirstButtonReturn;
         if (idx >= 0 && idx < (NSInteger)show.count) {
-            NSString *url = show[idx][@"url"];
-            [self->_momentermBrowserPanelVC loadURLString:url];
+            [self it_openURLStringInSystemBrowser:show[idx][@"url"]];
         }
     }];
 }
 
-- (void)it_updateMomentermGitGraphCwd {
-    if (!_contentView.shouldShowMomentermGitGraphPanel) {
-        return;
-    }
-    NSString *cwd = [[self currentSession] currentLocalWorkingDirectory];
-    if (cwd.length == 0) {
-        cwd = NSHomeDirectory();
-    }
-    [_momentermGitGraphPanelVC setCwd:cwd];
-}
-
-// MARK: - MomentermBottomStripDelegate
-
-- (void)momentermBottomStripDidTapGitGraph {
-    [self it_setMomentermRightPanel:@"gitgraph"];
-}
-
-- (void)momentermBottomStripDidTapBrowser {
-    [self it_setMomentermRightPanel:@"browser"];
-}
-
-// MARK: - Browser / Git Graph detach + close
-
-- (void)momentermBrowserPanelRequestDetachToggle {
-    [self it_toggleDetachForPanel:@"browser"];
-}
-
-- (void)momentermBrowserPanelRequestClose {
-    if (_momentermBrowserDetachedWindow) {
-        [_momentermBrowserDetachedWindow close];
-        return;
-    }
-    _contentView.shouldShowMomentermBrowserPanel = NO;
-    [_momentermBottomStripView setActivePanel:@""];
-}
+// MARK: - Right-side panel detach + close
 
 - (void)momentermGitGraphPanelRequestDetachToggle {
     [self it_toggleDetachForPanel:@"gitgraph"];
@@ -1466,13 +1494,22 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 }
 
 // Swap the panel's view between the inline container and a floating window.
-// Called when the user clicks the detach icon in either panel's toolbar.
+// Called when the user clicks the detach icon in a panel's toolbar.
 - (void)it_toggleDetachForPanel:(NSString *)panel {
-    const BOOL isBrowser = [panel isEqualToString:@"browser"];
-    NSViewController *vc = isBrowser ? (NSViewController *)_momentermBrowserPanelVC
-                                     : (NSViewController *)_momentermGitGraphPanelVC;
-    NSWindow *existing = isBrowser ? _momentermBrowserDetachedWindow
-                                   : _momentermGitGraphDetachedWindow;
+    NSViewController *vc = nil;
+    NSWindow *existing = nil;
+    NSString *title = nil;
+    if ([panel isEqualToString:@"gitgraph"]) {
+        vc = (NSViewController *)_momentermGitGraphPanelVC;
+        existing = _momentermGitGraphDetachedWindow;
+        title = @"MomenTerm — Git Graph";
+    } else if ([panel isEqualToString:@"fileeditor"]) {
+        vc = (NSViewController *)_momentermFileEditorVC;
+        existing = _momentermFileEditorDetachedWindow;
+        title = @"MomenTerm — Editor";
+    } else {
+        return;
+    }
 
     if (existing) {
         // Re-attach: close window, return view to inline container.
@@ -1497,18 +1534,18 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
                                                              NSWindowStyleMaskResizable
                                                      backing:NSBackingStoreBuffered
                                                        defer:NO];
-    window.title = isBrowser ? @"MomenTerm — Browser" : @"MomenTerm — Git Graph";
+    window.title = title;
     window.releasedWhenClosed = NO;
     window.contentViewController = vc;
 
-    if (isBrowser) {
-        _momentermBrowserDetachedWindow = window;
-        _momentermBrowserPanelVC.isDetached = YES;
-        _contentView.shouldShowMomentermBrowserPanel = NO;
-    } else {
+    if ([panel isEqualToString:@"gitgraph"]) {
         _momentermGitGraphDetachedWindow = window;
         _momentermGitGraphPanelVC.isDetached = YES;
         _contentView.shouldShowMomentermGitGraphPanel = NO;
+    } else {
+        _momentermFileEditorDetachedWindow = window;
+        _momentermFileEditorVC.isDetached = YES;
+        _contentView.shouldShowMomentermFileEditorPanel = NO;
     }
     [_momentermBottomStripView setActivePanel:@""];
 
@@ -1524,26 +1561,26 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:NSWindowWillCloseNotification
                                                   object:window];
-    if (window == _momentermBrowserDetachedWindow) {
+    if (window == _momentermGitGraphDetachedWindow) {
         // Release the view from the window first so it has no superview, then
         // re-parent into the inline container and make it visible. Closing
         // the floater is the explicit "bring it home" gesture.
         window.contentViewController = nil;
-        _contentView.momentermBrowserPanelContainer = _momentermBrowserPanelVC.view;
-        _momentermBrowserPanelVC.isDetached = NO;
-        _momentermBrowserDetachedWindow = nil;
-        _contentView.shouldShowMomentermGitGraphPanel = NO;
-        _contentView.shouldShowMomentermBrowserPanel = YES;
-        [_momentermBottomStripView setActivePanel:@"browser"];
-    } else if (window == _momentermGitGraphDetachedWindow) {
-        window.contentViewController = nil;
         _contentView.momentermGitGraphPanelContainer = _momentermGitGraphPanelVC.view;
         _momentermGitGraphPanelVC.isDetached = NO;
         _momentermGitGraphDetachedWindow = nil;
-        _contentView.shouldShowMomentermBrowserPanel = NO;
+        _contentView.shouldShowMomentermFileEditorPanel = NO;
         _contentView.shouldShowMomentermGitGraphPanel = YES;
         [_momentermBottomStripView setActivePanel:@"gitgraph"];
         [self it_updateMomentermGitGraphCwd];
+    } else if (window == _momentermFileEditorDetachedWindow) {
+        window.contentViewController = nil;
+        _contentView.momentermFileEditorPanelContainer = _momentermFileEditorVC.view;
+        _momentermFileEditorVC.isDetached = NO;
+        _momentermFileEditorDetachedWindow = nil;
+        _contentView.shouldShowMomentermGitGraphPanel = NO;
+        _contentView.shouldShowMomentermFileEditorPanel = YES;
+        [_momentermBottomStripView setActivePanel:@""];
     }
     [self it_refitAllSessionsAfterMomentermLayoutChange];
 }
@@ -1625,35 +1662,31 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 }
 
 - (void)fileTreeDidRequestOpenEditorAtPath:(NSString *)path {
-    // Remove any existing overlay first
-    if (_momentermEditorVC) {
-        [_momentermEditorVC.view removeFromSuperview];
-        [_momentermEditorVC release];
-        _momentermEditorVC = nil;
-        [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                        name:@"MomentermEditorOverlayVCDidClose"
-                                                      object:nil];
-    }
     NSURL *url = [NSURL fileURLWithPath:path];
-    MomentermEditorOverlayVC *vc = [[MomentermEditorOverlayVC alloc] initWithURL:url];
-    // Add as subview of tabView so it covers the terminal and resizes with it
-    NSView *tabView = _contentView.tabView;
-    vc.view.frame = tabView.bounds;
-    vc.view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
-    [tabView addSubview:vc.view];
-    _momentermEditorVC = vc;
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(it_editorOverlayClosed:)
-                                                 name:@"MomentermEditorOverlayVCDidClose"
-                                               object:vc];
+    // Load the file into the persistent right-side editor panel. If the user
+    // cancels (unsaved changes), bail without toggling the panel.
+    if (![_momentermFileEditorVC setFileURL:url]) {
+        return;
+    }
+    if (!_contentView.shouldShowMomentermFileEditorPanel) {
+        [self it_setMomentermRightPanel:@"fileeditor"];
+    }
 }
 
-- (void)it_editorOverlayClosed:(NSNotification *)note {
-    [[NSNotificationCenter defaultCenter] removeObserver:self
-                                                    name:@"MomentermEditorOverlayVCDidClose"
-                                                  object:nil];
-    [_momentermEditorVC release];
-    _momentermEditorVC = nil;
+// MARK: - MomentermFileEditorPanelDelegate
+
+- (void)momentermFileEditorPanelRequestDetachToggle {
+    [self it_toggleDetachForPanel:@"fileeditor"];
+}
+
+- (void)momentermFileEditorPanelRequestClose {
+    if (_momentermFileEditorDetachedWindow) {
+        [_momentermFileEditorDetachedWindow close];
+        return;
+    }
+    _contentView.shouldShowMomentermFileEditorPanel = NO;
+    [_momentermBottomStripView setActivePanel:@""];
+    [self it_refitAllSessionsAfterMomentermLayoutChange];
 }
 
 - (void)fileTreeDidRequestClose {
@@ -1720,12 +1753,11 @@ ITERM_WEAKLY_REFERENCEABLE
     [_momentermToggleAccessory release];
     [_momentermFileTreeVC release];
     [_momentermFileTreePath release];
-    [_momentermEditorVC release];
-    [_momentermBrowserPanelVC release];
+    [_momentermFileEditorVC release];
     [_momentermGitGraphPanelVC release];
     [_momentermBottomStripView release];
-    [_momentermBrowserDetachedWindow release];
     [_momentermGitGraphDetachedWindow release];
+    [_momentermFileEditorDetachedWindow release];
     [[NSNotificationCenter defaultCenter] removeObserver:self
                                                     name:NSWindowWillCloseNotification
                                                   object:nil];
