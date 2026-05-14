@@ -15,6 +15,10 @@ import AppKit
     func sidebarDidRequestOpenProject(path: String, spaceName: String, projectName: String, inNewTab: Bool, aiCommand: String?)
     /// Called when the user requests the file tree panel for a project.
     func sidebarDidRequestShowFileTree(path: String, projectName: String)
+    /// Called when the user clicks a file inside an inline-expanded project
+    /// tree. The host should load `filePath` into the right-side file editor
+    /// panel (reusing the existing editor wiring used by the file-tree panel).
+    func sidebarDidRequestOpenFile(filePath: String, projectPath: String, projectName: String)
 }
 
 // MARK: - WorkspaceCellView (hover "+" button)
@@ -74,6 +78,84 @@ private final class WorkspaceCellView: NSTableCellView {
         super.prepareForReuse()
         addBtn.alphaValue = 0
         addAction = nil
+    }
+}
+
+// MARK: - ProjectCellView (hover-revealed inline action strip)
+
+/// Project row cell whose 4-icon inline action strip fades in on hover.
+/// The strip is owned by the cell but the buttons inside are configured by
+/// the sidebar VC via `setActionStrip(_:)`. AI / folder badges remain visible
+/// at all times so per-project actions (e.g. Claude Code launch) stay reachable.
+private final class ProjectCellView: NSTableCellView {
+    private(set) var actionStrip: NSView?
+    private var trackArea: NSTrackingArea?
+    /// When true the strip is rendered at full opacity and hover tracking is
+    /// skipped — used in inline mode where the IDE-style action icons live
+    /// permanently next to the project name.
+    private var actionStripAlwaysVisible = false
+
+    func setActionStrip(_ strip: NSView?, alwaysVisible: Bool = false) {
+        actionStrip?.removeFromSuperview()
+        actionStrip = strip
+        actionStripAlwaysVisible = alwaysVisible
+        if let strip = strip {
+            strip.alphaValue = alwaysVisible ? 1 : 0
+            addSubview(strip)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let ta = trackArea { removeTrackingArea(ta); trackArea = nil }
+        // No hover fade needed when the strip is permanently visible.
+        guard !actionStripAlwaysVisible else { return }
+        let ta = NSTrackingArea(rect: bounds,
+                                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                owner: self, userInfo: nil)
+        addTrackingArea(ta)
+        trackArea = ta
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        guard !actionStripAlwaysVisible, let strip = actionStrip else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            strip.animator().alphaValue = 1
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        guard !actionStripAlwaysVisible, let strip = actionStrip else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.12
+            strip.animator().alphaValue = 0
+        }
+    }
+
+    override func prepareForReuse() {
+        super.prepareForReuse()
+        actionStrip?.removeFromSuperview()
+        actionStrip = nil
+        actionStripAlwaysVisible = false
+    }
+}
+
+// MARK: - FileNodeCellView (inline file/folder rows)
+
+/// File/folder row cell whose label re-anchors itself in `layout()`. We do
+/// the positioning here (instead of relying on autoresizingMask) because
+/// NSOutlineView can snap cell.frame to the real row width *after* the first
+/// paint during an expand animation — a known macOS quirk that left labels
+/// invisible on freshly-expanded rows until a manual refresh fired a layout
+/// pass. Re-laying out on every `layout()` makes the cell self-correcting.
+private final class FileNodeCellView: NSTableCellView {
+    override func layout() {
+        super.layout()
+        guard let label = textField, label.superview === self else { return }
+        label.frame = NSRect(x: 22, y: 2,
+                             width: max(0, bounds.width - 26),
+                             height: 16)
     }
 }
 
@@ -150,6 +232,32 @@ private enum SidebarItem {
     case project(MomentermProject, space: MomentermProjectSpace)
 }
 
+// MARK: - File-view mode (panel vs inline)
+
+/// How the per-project file tree is presented.
+///   - panel:  right-side floating panel (legacy / default).
+///   - inline: VS Code / Antigravity-style — files appear directly below the
+///             project row in the sidebar's own outline view.
+@objc enum MtSidebarFileViewMode: Int {
+    case panel  = 0
+    case inline = 1
+
+    fileprivate static let userDefaultsKey = "MtSidebarFileViewMode"
+
+    fileprivate static var current: MtSidebarFileViewMode {
+        get {
+            // First-install default is .inline (IDE-style). A user that explicitly
+            // picks .panel will have rawValue 0 persisted, so this fallback only
+            // kicks in when nothing was ever stored.
+            let raw = iTermUserDefaults.userDefaults().object(forKey: userDefaultsKey) as? Int
+            return MtSidebarFileViewMode(rawValue: raw ?? 1) ?? .inline
+        }
+        set {
+            iTermUserDefaults.userDefaults().set(newValue.rawValue, forKey: userDefaultsKey)
+        }
+    }
+}
+
 // MARK: - DropTarget (shared computation result for validate + accept)
 
 private struct DropTarget {
@@ -173,8 +281,18 @@ private struct DropTarget {
 
     @objc weak var sidebarDelegate: MomentermEmbeddedSidebarDelegate?
 
+    /// When true, double-clicking a project bypasses the "새 탭 / 새 창" dialog
+    /// and opens immediately. Set by hosts (e.g. the welcome window) that have
+    /// no existing terminal window to tab into.
+    @objc var suppressProjectOpenDialog = false
+
     private var store: MomentermProjectStore = MomentermProjectStorage.shared.load()
     private var filteredItems: [SidebarItem]?  // nil → full tree; non-nil → flat filtered list
+
+    /// projectId → root MtFileNode for inline-expanded projects.
+    /// Reference identity matters for NSOutlineView item caching, so we hand the
+    /// same MtFileNode instances back from the data source repeatedly.
+    private var expandedFileTrees: [String: MtFileNode] = [:]
 
     private var searchField: NSSearchField!
     private var addButton: NSButton!
@@ -191,6 +309,11 @@ private struct DropTarget {
     /// Temporary strong reference for the AI tool picker trampoline.
     private var _retainedAITrampoline: AIToolPickerTrampoline?
 
+    /// Guard for the cold-launch workspace expand. NSOutlineView ignores
+    /// `expandItem(nil)` calls issued before its first layout pass, so we have
+    /// a viewDidAppear-time safety net that fires exactly once.
+    private var didCompleteInitialExpand = false
+
     // MARK: - Lifecycle
 
     override func loadView() {
@@ -202,8 +325,17 @@ private struct DropTarget {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        if MtSidebarFileViewMode.current == .inline {
+            populateAllInlineFileTrees()
+        }
         outlineView.reloadData()
-        outlineView.expandItem(nil, expandChildren: true)
+        expandAllWorkspaces()
+        // Safety net A: next runloop, still in viewDidLoad context. Helps in
+        // most cases but is not enough on a true cold launch where the view
+        // hasn't been attached to a window yet.
+        DispatchQueue.main.async { [weak self] in
+            self?.expandAllWorkspaces()
+        }
 
         // Cmd+Opt+O → 세부 파일보기
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
@@ -220,6 +352,17 @@ private struct DropTarget {
 
     deinit {
         if let monitor = keyMonitor { NSEvent.removeMonitor(monitor) }
+    }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // Safety net B: the window-attached signal. NSOutlineView only starts
+        // its real layout pass once the view is in a window, so an
+        // expandItem(nil) issued during viewDidLoad can be silently dropped
+        // on cold launch. Reissue here, exactly once.
+        guard !didCompleteInitialExpand else { return }
+        didCompleteInitialExpand = true
+        expandAllWorkspaces()
     }
 
     // MARK: - Setup
@@ -273,12 +416,19 @@ private struct DropTarget {
         outlineView = MtSidebarOutlineView()
         outlineView.style = .sourceList
         outlineView.rowHeight = 22
-        outlineView.indentationPerLevel = 12
+        // Tight indent — paired with dropping the left "</>" icon in inline
+        // mode, this reclaims ~8px so longer project names fit before "…".
+        outlineView.indentationPerLevel = 8
         outlineView.intercellSpacing = NSSize(width: 0, height: 2)
         outlineView.headerView = nil
         outlineView.dataSource = self
         outlineView.delegate = self
         outlineView.target = self
+        // IDE-style: single-click on a file node opens the right-side editor;
+        // single-click on a folder node toggles its expansion. Project rows
+        // intentionally do nothing on single-click — the double-click handler
+        // below preserves the "new tab vs new window" choice prompt.
+        outlineView.action = #selector(sidebarRowClicked)
         outlineView.doubleAction = #selector(doubleClicked)
         outlineView.dragStateDidClear = { [weak self] in
             self?.dropOverlay?.guide = nil
@@ -428,10 +578,18 @@ private struct DropTarget {
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
         if q.isEmpty {
             filteredItems = nil
+            // Keep inline trees in sync with store mutations (project add/remove/move):
+            // drop entries whose project is gone, then pre-load any newly added ones.
+            if MtSidebarFileViewMode.current == .inline {
+                pruneStaleInlineFileTrees()
+                populateAllInlineFileTrees()
+            }
             outlineView.reloadData()
-            outlineView.expandItem(nil, expandChildren: true)
+            expandAllWorkspaces()
             return
         }
+        // Search flattens the tree and hides per-project file children.
+        if !expandedFileTrees.isEmpty { expandedFileTrees.removeAll() }
         var results: [SidebarItem] = []
         for space in store.spaces {
             if space.name.lowercased().contains(q) {
@@ -463,6 +621,38 @@ private struct DropTarget {
         cloneRepositoryAsWorkspace()
     }
 
+    /// Single-click handler for the sidebar outline view.
+    ///   • Folder file node → toggle expansion (IDE behaviour).
+    ///   • File file node   → load into the right-side editor via the host.
+    ///   • Anything else (project/workspace rows) → ignored, so double-click
+    ///     and dedicated badge buttons remain the way to trigger their actions.
+    @objc private func sidebarRowClicked() {
+        let row = outlineView.clickedRow
+        guard row >= 0 else { return }
+        guard let item = outlineView.item(atRow: row) else { return }
+        guard let node = item as? MtFileNode else { return }
+        if node.isDirectory {
+            // Animate the expand/collapse so the tree feels alive instead of
+            // snapping. animator() proxy + an explicit duration is enough —
+            // NSOutlineView handles the row fade/slide for us.
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.18
+                ctx.allowsImplicitAnimation = true
+                if outlineView.isItemExpanded(node) {
+                    outlineView.animator().collapseItem(node)
+                } else {
+                    outlineView.animator().expandItem(node)
+                }
+            }
+            return
+        }
+        guard let projectId = projectIdContaining(node: node) else { return }
+        guard let project = store.spaces.flatMap({ $0.projects }).first(where: { $0.id == projectId }) else { return }
+        sidebarDelegate?.sidebarDidRequestOpenFile(filePath: node.url.path,
+                                                  projectPath: project.path,
+                                                  projectName: project.name)
+    }
+
     @objc private func doubleClicked() {
         let row = outlineView.clickedRow
         guard row >= 0 else { return }
@@ -475,6 +665,17 @@ private struct DropTarget {
             item = outlineView.item(atRow: row) as? SidebarItem
         }
         guard let item = item, case .project(let project, let space) = item else { return }
+
+        // In welcome-window context there is no existing terminal to tab into,
+        // so skip the choice dialog and open directly.
+        if suppressProjectOpenDialog {
+            sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
+                                                         spaceName: space.name,
+                                                         projectName: project.name,
+                                                         inNewTab: false,
+                                                         aiCommand: nil)
+            return
+        }
 
         let alert = NSAlert()
         alert.messageText = "\u{201C}\(project.name)\u{201D} 열기"
@@ -517,8 +718,109 @@ private struct DropTarget {
         passkeyItem.target = self
         menu.addItem(passkeyItem)
 
+        menu.addItem(NSMenuItem.separator())
+
+        // 파일 보기 방식 — 우측 패널 vs 인라인 펼침
+        let viewModeMenu = NSMenu()
+        let currentMode = MtSidebarFileViewMode.current
+        let panelItem = NSMenuItem(title: "우측 패널",
+                                   action: #selector(setFileViewModePanel),
+                                   keyEquivalent: "")
+        panelItem.target = self
+        panelItem.state = (currentMode == .panel) ? .on : .off
+        viewModeMenu.addItem(panelItem)
+
+        let inlineItem = NSMenuItem(title: "인라인 펼침",
+                                    action: #selector(setFileViewModeInline),
+                                    keyEquivalent: "")
+        inlineItem.target = self
+        inlineItem.state = (currentMode == .inline) ? .on : .off
+        viewModeMenu.addItem(inlineItem)
+
+        let viewModeParent = NSMenuItem(title: "파일 보기 방식", action: nil, keyEquivalent: "")
+        viewModeParent.submenu = viewModeMenu
+        menu.addItem(viewModeParent)
+
         let btnFrame = settingsButton.convert(settingsButton.bounds, to: nil)
         menu.popUp(positioning: menu.items[0], at: NSPoint(x: btnFrame.minX, y: btnFrame.minY), in: settingsButton.window?.contentView)
+    }
+
+    @objc private func setFileViewModePanel() {
+        if MtSidebarFileViewMode.current == .panel { return }
+        MtSidebarFileViewMode.current = .panel
+        collapseAllInlineTrees()
+    }
+
+    @objc private func setFileViewModeInline() {
+        if MtSidebarFileViewMode.current == .inline { return }
+        MtSidebarFileViewMode.current = .inline
+        // IDE-style: every project starts expanded with its file tree pre-loaded,
+        // so users see disclosure triangles on every row immediately.
+        populateAllInlineFileTrees()
+        outlineView.reloadData()
+        expandAllWorkspaces()
+    }
+
+    /// Expands every workspace header so its projects are visible by default,
+    /// while leaving the projects themselves collapsed (no inline file tree).
+    ///
+    /// We iterate the visible top-level rows and feed each handle back into
+    /// `expandItem(_:)` directly. `SidebarItem` is a Swift `enum` boxed via
+    /// `Any` for NSOutlineView — every fresh `SidebarItem.space(...)` we build
+    /// gets a new NSObject wrapper, and `expandItem`/`isItemExpanded` compare
+    /// wrappers by identity. Using `outlineView.item(atRow:)` returns the exact
+    /// wrapper NSOutlineView already cached, so the call hits.
+    ///
+    /// Reverse iteration matters: expanding workspace[0] inserts its project
+    /// rows just below it, which shifts every later workspace's row index.
+    /// Walking high → low keeps the captured indices valid.
+    fileprivate func expandAllWorkspaces() {
+        guard filteredItems == nil else { return }
+        let workspaceCount = store.spaces.count
+        for index in (0..<workspaceCount).reversed() {
+            guard let item = outlineView.item(atRow: index) else { continue }
+            outlineView.expandItem(item)
+        }
+    }
+
+    /// Drops `expandedFileTrees` entries whose project no longer exists in the
+    /// current store — keeps the dictionary from accumulating stale roots after
+    /// a project is removed or moved between workspaces.
+    fileprivate func pruneStaleInlineFileTrees() {
+        let liveIds = Set(store.spaces.flatMap { $0.projects.map(\.id) })
+        for key in expandedFileTrees.keys where !liveIds.contains(key) {
+            expandedFileTrees.removeValue(forKey: key)
+        }
+    }
+
+    /// Pre-loads the inline file tree root for every project so that
+    /// `isItemExpandable` can report `true` and NSOutlineView shows a
+    /// disclosure triangle on every project row without the user having to
+    /// click the folder icon first. Projects whose path is missing on disk
+    /// are skipped — they keep the warning badge instead of a broken tree.
+    fileprivate func populateAllInlineFileTrees() {
+        for space in store.spaces {
+            for project in space.projects {
+                if expandedFileTrees[project.id] != nil { continue }
+                guard project.pathExists else { continue }
+                let root = MtFileNode(url: URL(fileURLWithPath: project.path),
+                                      isDirectory: true)
+                MomentermFileOperations.loadChildren(of: root)
+                expandedFileTrees[project.id] = root
+            }
+        }
+    }
+
+    /// Collapses every inline file tree and reloads — used when switching out
+    /// of inline mode or before a drag (so the drop-indicator math stays valid).
+    private func collapseAllInlineTrees() {
+        guard !expandedFileTrees.isEmpty else {
+            outlineView.reloadData()
+            return
+        }
+        expandedFileTrees.removeAll()
+        outlineView.reloadData()
+        expandAllWorkspaces()
     }
 
     @objc private func showShortcutsPopover() {
@@ -925,7 +1227,29 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDataSource {
             return item == nil ? filtered.count : 0
         }
         if item == nil { return store.spaces.count }
-        if let row = item as? SidebarItem, case .space(let s) = row { return s.projects.count }
+        if let row = item as? SidebarItem {
+            switch row {
+            case .space(let s):
+                return s.projects.count
+            case .project(let project, _):
+                if MtSidebarFileViewMode.current != .inline { return 0 }
+                // Lazy-load: if populateAllInlineFileTrees skipped this project at
+                // startup (pathExists was false then), try now on first access.
+                if expandedFileTrees[project.id] == nil, project.pathExists {
+                    let root = MtFileNode(url: URL(fileURLWithPath: project.path),
+                                          isDirectory: true)
+                    MomentermFileOperations.loadChildren(of: root)
+                    expandedFileTrees[project.id] = root
+                }
+                guard let root = expandedFileTrees[project.id] else { return 0 }
+                if root.children == nil { MomentermFileOperations.loadChildren(of: root) }
+                return root.children?.count ?? 0
+            }
+        }
+        if let node = item as? MtFileNode, node.isDirectory {
+            if node.children == nil { MomentermFileOperations.loadChildren(of: node) }
+            return node.children?.count ?? 0
+        }
         return 0
     }
 
@@ -934,16 +1258,46 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDataSource {
             return filtered[index]
         }
         if item == nil { return SidebarItem.space(store.spaces[index]) }
-        guard let row = item as? SidebarItem, case .space(let s) = row else {
-            it_fatalError("Unexpected nil children in embedded sidebar")
+        if let row = item as? SidebarItem {
+            switch row {
+            case .space(let s):
+                return SidebarItem.project(s.projects[index], space: s)
+            case .project(let project, _):
+                if let root = expandedFileTrees[project.id], let children = root.children {
+                    return children[index]
+                }
+                it_fatalError("Inline file child requested but root tree is not loaded")
+            }
         }
-        return SidebarItem.project(s.projects[index], space: s)
+        if let node = item as? MtFileNode, let children = node.children {
+            return children[index]
+        }
+        it_fatalError("Unexpected item type in embedded sidebar data source")
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
         if filteredItems != nil { return false }
-        guard let row = item as? SidebarItem, case .space(let s) = row else { return false }
-        return !s.projects.isEmpty
+        if let row = item as? SidebarItem {
+            switch row {
+            case .space(let s):
+                return !s.projects.isEmpty
+            case .project(let project, _):
+                if MtSidebarFileViewMode.current == .inline {
+                    // Show ▶ only when the tree is loaded and has children, or
+                    // when the path exists but hasn't been loaded yet (lazy load
+                    // will fire in numberOfChildrenOfItem on first expand attempt).
+                    guard let root = expandedFileTrees[project.id] else {
+                        return project.pathExists
+                    }
+                    return !(root.children?.isEmpty ?? true)
+                }
+                return expandedFileTrees[project.id] != nil
+            }
+        }
+        if let node = item as? MtFileNode {
+            return node.isDirectory
+        }
+        return false
     }
 
     // MARK: Drag-and-drop reordering
@@ -952,6 +1306,12 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDataSource {
         guard filteredItems == nil,
               let row = item as? SidebarItem,
               case .project(let project, let space) = row else { return nil }
+        // Inline file trees mess up the drop-indicator math (which assumes
+        // each space's projects occupy consecutive rows). Collapse them all
+        // before the drag begins; the user can re-expand after the drop.
+        if !expandedFileTrees.isEmpty {
+            collapseAllInlineTrees()
+        }
         let pb = NSPasteboardItem()
         pb.setString("\(space.id)|\(project.id)", forType: Self.projectDragType)
         return pb
@@ -1192,34 +1552,108 @@ extension MomentermEmbeddedSidebarVC {
 extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        guard let row = item as? SidebarItem else { return nil }
-        switch row {
-        case .space(let space):
-            return makeCell(outlineView, text: space.name.uppercased(), symbol: "folder.fill",
-                            isHeader: true, accent: false, aiTool: nil,
-                            addProjectHandler: { [weak self] in self?.addProjectToSpaceCore(space) })
-        case .project(let project, _):
-            return makeCell(outlineView, text: project.name, symbol: "chevron.left.slash.chevron.right",
-                            isHeader: false, accent: !project.pathExists,
-                            aiTool: project.aiTool, localBackend: project.localLLMBackend)
+        if let row = item as? SidebarItem {
+            switch row {
+            case .space(let space):
+                return makeCell(outlineView, text: space.name.uppercased(), symbol: "folder.fill",
+                                isHeader: true, accent: false, aiTool: nil,
+                                addProjectHandler: { [weak self] in self?.addProjectToSpaceCore(space) })
+            case .project(let project, _):
+                let inlineExpanded = (expandedFileTrees[project.id] != nil)
+                return makeCell(outlineView, text: project.name, symbol: "chevron.left.slash.chevron.right",
+                                isHeader: false, accent: !project.pathExists,
+                                aiTool: project.aiTool, localBackend: project.localLLMBackend,
+                                inlineExpanded: inlineExpanded)
+            }
         }
+        if let node = item as? MtFileNode {
+            return makeFileNodeCell(outlineView, node: node)
+        }
+        return nil
     }
 
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
         return false
     }
 
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        // Belt-and-braces against a macOS quirk: during an expand animation
+        // NSOutlineView can snap cell frames *after* the first paint, which
+        // leaves freshly-visible **file** rows with a clipped label.
+        // Reloading the expanded item kicks an immediate layout pass so the
+        // rows render correctly without the user needing to hit refresh.
+        //
+        // Restricted to MtFileNode items: workspace/project expand events
+        // don't exhibit the quirk, and reloading them at startup has been
+        // observed to leave the workspace visually collapsed on first launch
+        // (NSOutlineView reverses the just-fired expand under some macOS
+        // versions when reloadItem races with the initial layout).
+        guard let item = notification.userInfo?["NSObject"],
+              item is MtFileNode else { return }
+        outlineView.reloadItem(item, reloadChildren: false)
+    }
+
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        guard let row = item as? SidebarItem else { return false }
-        if case .space = row { return false }
-        return true
+        if let row = item as? SidebarItem {
+            if case .space = row { return false }
+            return true
+        }
+        if let node = item as? MtFileNode {
+            // Allow selection (so context-menu / new-file target works); files
+            // remain harmless because we don't define a single-click action on
+            // them in the sidebar. Folders are selectable too for hierarchy nav.
+            _ = node
+            return true
+        }
+        return false
+    }
+
+    // MARK: File-node cell
+
+    private func makeFileNodeCell(_ ov: NSOutlineView, node: MtFileNode) -> NSTableCellView {
+        let id = NSUserInterfaceItemIdentifier("MtSidebarFileCell")
+        // Use the outline view width as a sane starting point. The real fix
+        // for the "label clipped after expand" quirk lives in
+        // FileNodeCellView.layout(), which re-anchors the label every layout
+        // pass — that path is what makes a freshly-expanded row paint
+        // correctly without needing a manual refresh.
+        let cellW = max(ov.bounds.width, 220)
+        let cell: FileNodeCellView
+        if let reused = ov.makeView(withIdentifier: id, owner: nil) as? FileNodeCellView {
+            cell = reused
+            cell.subviews.forEach { $0.removeFromSuperview() }
+        } else {
+            cell = FileNodeCellView(frame: NSRect(x: 0, y: 0, width: cellW, height: 20))
+        }
+        cell.identifier = id
+        cell.frame = NSRect(x: 0, y: 0, width: cellW, height: 20)
+        cell.autoresizingMask = [.width]
+
+        let icon = NSImageView(frame: NSRect(x: 4, y: 3, width: 14, height: 14))
+        icon.autoresizingMask = []
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        icon.image = NSImage(systemSymbolName: node.isDirectory ? "folder.fill" : "doc",
+                             accessibilityDescription: nil)
+        icon.contentTintColor = node.isDirectory ? .controlAccentColor : .secondaryLabelColor
+        cell.addSubview(icon)
+
+        let label = NSTextField(labelWithString: node.displayName)
+        label.font = .systemFont(ofSize: 11)
+        label.autoresizingMask = [.width]
+        label.frame = NSRect(x: 22, y: 2, width: max(0, cellW - 26), height: 16)
+        label.lineBreakMode = .byTruncatingMiddle
+        cell.addSubview(label)
+        cell.textField = label
+        return cell
     }
 
     private func makeCell(_ ov: NSOutlineView, text: String, symbol: String,
                           isHeader: Bool, accent: Bool,
                           aiTool: MomentermAITool? = nil,
                           localBackend: MomentermLocalLLMBackend? = nil,
-                          addProjectHandler: (() -> Void)? = nil) -> NSTableCellView {
+                          addProjectHandler: (() -> Void)? = nil,
+                          inlineExpanded: Bool = false) -> NSTableCellView {
         let id = NSUserInterfaceItemIdentifier(isHeader ? "MtSpaceCell" : "MtProjectCell")
         let cellW = max(ov.bounds.width, 220)
         let cell: NSTableCellView
@@ -1232,31 +1666,59 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
             // Remove all subviews except the built-in addBtn
             cell.subviews.filter { $0 !== (cell as? WorkspaceCellView)?.addBtn }.forEach { $0.removeFromSuperview() }
         } else {
-            if let reused = ov.makeView(withIdentifier: id, owner: nil) as? NSTableCellView {
+            if let reused = ov.makeView(withIdentifier: id, owner: nil) as? ProjectCellView {
                 cell = reused
+                (cell as? ProjectCellView)?.setActionStrip(nil)
+                cell.subviews.forEach { $0.removeFromSuperview() }
             } else {
-                cell = NSTableCellView()
+                cell = ProjectCellView()
                 cell.frame = NSRect(x: 0, y: 0, width: cellW, height: 24)
             }
-            cell.subviews.forEach { $0.removeFromSuperview() }
         }
         cell.identifier = id
 
-        // Leading icon
-        let iconView = NSImageView(frame: NSRect(x: 4, y: 4, width: 16, height: 16))
-        iconView.autoresizingMask = []
-        iconView.imageScaling = .scaleProportionallyUpOrDown
-        iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
-        if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            iconView.image = img
+        // Leading icon — drawn only for workspace header rows and panel-mode
+        // project rows. In inline mode the disclosure triangle already gives
+        // each project a clear visual anchor, so the `</>` icon is dropped to
+        // reclaim ~20px for the project name (per user feedback on truncation).
+        let isInlineProjectRow = !isHeader && MtSidebarFileViewMode.current == .inline
+        if !isInlineProjectRow {
+            let iconView = NSImageView(frame: NSRect(x: 4, y: 4, width: 16, height: 16))
+            iconView.autoresizingMask = []
+            iconView.imageScaling = .scaleProportionallyUpOrDown
+            iconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+            if let img = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
+                iconView.image = img
+            }
+            iconView.contentTintColor = isHeader ? .secondaryLabelColor
+                                      : (accent ? .systemRed : .controlAccentColor)
+            cell.addSubview(iconView)
         }
-        iconView.contentTintColor = isHeader ? .secondaryLabelColor
-                                  : (accent ? .systemRed : .controlAccentColor)
-        cell.addSubview(iconView)
 
-        // Label — project cells reserve 38px right for folder + AI badge
-        let labelX: CGFloat = 24
-        let labelRightPad: CGFloat = isHeader ? 20 : 38
+        // Label — reserved right-side space depends on the mode:
+        //   • header rows:    just enough for the hover "+" button
+        //   • inline mode:    [action-strip] + [AI badge] permanently visible
+        //                     next to the project name (the disclosure triangle
+        //                     replaces the legacy folder icon)
+        //   • panel mode:     [folder][AI] badges as before
+        // The label uses truncating-tail so long project names degrade to "…"
+        // instead of crashing into the right-side icons.
+        // labelX:
+        //   • workspace header → 24 (room for the folder.fill leading icon)
+        //   • panel-mode project → 24 (room for the </> leading icon)
+        //   • inline-mode project → 4 (leading icon dropped, label starts flush)
+        let labelX: CGFloat = isInlineProjectRow ? 4 : 24
+        let labelRightPad: CGFloat
+        if isHeader {
+            labelRightPad = 20
+        } else if MtSidebarFileViewMode.current == .inline {
+            // Matches the slim makeInlineActionStrip: 1 icon × 14 (no
+            // background, no padding) + 4 gap + 14 (AI badge) + 4 right
+            // margin = 36.
+            labelRightPad = 14 + 4 + 14 + 4 + 4
+        } else {
+            labelRightPad = 38
+        }
         let label = NSTextField(labelWithString: text)
         label.autoresizingMask = .width
         label.frame = NSRect(x: labelX, y: 4, width: max(0, cell.bounds.width - labelX - labelRightPad), height: 16)
@@ -1276,26 +1738,48 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
         }
 
         // ── Project cell right-side badges ────────────────────────────
-        // Layout (right-to-left): [folder] [AI/warning]
+        // Layout (right-to-left):
+        //   • inline mode:  [action strip] [AI/warning]    (no folder icon —
+        //                   the disclosure triangle takes over expand/collapse)
+        //   • panel  mode:  [folder] [AI/warning]
+        // The AI badge is anchored to the right edge in both modes so the
+        // Claude Code launch click target sits in a predictable spot.
         let badgeSize: CGFloat = 14
-        let folderX = cell.bounds.width - badgeSize - 4  // Folder icon (rightmost)
-        let aiX = folderX - badgeSize - 4                 // AI/warning badge (left of folder)
+        let isInlineMode = MtSidebarFileViewMode.current == .inline
+        let folderX = cell.bounds.width - badgeSize - 4
+        let aiX: CGFloat = isInlineMode
+            ? cell.bounds.width - badgeSize - 4
+            : folderX - badgeSize - 4
 
-        // Folder icon — always shown, opens file tree (rightmost)
-        let folderBtn = NSButton(frame: NSRect(x: folderX, y: 5, width: badgeSize, height: badgeSize))
-        folderBtn.autoresizingMask = [.minXMargin]
-        folderBtn.isBordered = false
-        folderBtn.imagePosition = .imageOnly
-        folderBtn.imageScaling = .scaleProportionallyUpOrDown
-        let folderCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
-        if let img = NSImage(systemSymbolName: "folder", accessibilityDescription: "파일 보기")?
-                .withSymbolConfiguration(folderCfg) {
-            folderBtn.image = img
+        // Folder icon — panel mode only. In inline mode the right-side folder
+        // icon is redundant (the row's disclosure triangle expands/collapses),
+        // so we drop it entirely and reclaim the width for the label.
+        if !isInlineMode {
+            let folderBtn = NSButton(frame: NSRect(x: folderX, y: 5, width: badgeSize, height: badgeSize))
+            folderBtn.autoresizingMask = [.minXMargin]
+            folderBtn.isBordered = false
+            folderBtn.imagePosition = .imageOnly
+            folderBtn.imageScaling = .scaleProportionallyUpOrDown
+            let folderCfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+            let folderSymbol = inlineExpanded ? "folder.fill" : "folder"
+            if let img = NSImage(systemSymbolName: folderSymbol, accessibilityDescription: "파일 보기")?
+                    .withSymbolConfiguration(folderCfg) {
+                folderBtn.image = img
+            }
+            folderBtn.contentTintColor = inlineExpanded ? .controlAccentColor : .tertiaryLabelColor
+            folderBtn.target = self
+            folderBtn.action = #selector(folderIconClicked(_:))
+            cell.addSubview(folderBtn)
         }
-        folderBtn.contentTintColor = .tertiaryLabelColor
-        folderBtn.target = self
-        folderBtn.action = #selector(folderIconClicked(_:))
-        cell.addSubview(folderBtn)
+
+        // Inline mode: 4-icon action strip lives permanently next to the
+        // project name (new file / new folder / refresh / collapse all). The
+        // label reserves matching right-side padding so a short name never
+        // collides with the strip; long names truncate with "…" before reaching it.
+        if isInlineMode, let projectCell = cell as? ProjectCellView {
+            let strip = makeInlineActionStrip(rightOf: aiX, badgeSize: badgeSize, rowHeight: cell.bounds.height)
+            projectCell.setActionStrip(strip, alwaysVisible: true)
+        }
 
         // Left badge: warning takes priority over AI icon
         if accent {
@@ -1360,7 +1844,8 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
         )
     }
 
-    /// Handles taps on the per-project folder icon — opens the file tree panel.
+    /// Handles taps on the per-project folder icon — opens the file tree
+    /// (panel mode) or toggles the inline file tree (inline mode).
     @objc private func folderIconClicked(_ sender: NSButton) {
         var view: NSView? = sender
         while let v = view, !(v is NSTableCellView) { view = v.superview }
@@ -1376,7 +1861,49 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
             sidebarItem = outlineView.item(atRow: row) as? SidebarItem
         }
         guard let sidebarItem, case .project(let project, _) = sidebarItem else { return }
-        sidebarDelegate?.sidebarDidRequestShowFileTree(path: project.path, projectName: project.name)
+
+        // Search is active: inline expansion is disabled (filteredItems flattens
+        // the tree). Fall back to panel mode for a consistent search UX.
+        if filteredItems != nil || MtSidebarFileViewMode.current == .panel {
+            sidebarDelegate?.sidebarDidRequestShowFileTree(path: project.path, projectName: project.name)
+            return
+        }
+        toggleInlineFileTree(for: project)
+    }
+
+    /// Expands or collapses the inline file tree for `project`. Uses reference
+    /// identity (MtFileNode is a class) so NSOutlineView can cache rows.
+    fileprivate func toggleInlineFileTree(for project: MomentermProject) {
+        guard let projectItem = sidebarItem(forProjectId: project.id) else { return }
+        if expandedFileTrees[project.id] != nil {
+            // Collapse the visible rows first so NSOutlineView animates the hide,
+            // then drop our backing state and reload so the cell re-renders with
+            // the AI badge (instead of the inline action strip) and no triangle.
+            outlineView.collapseItem(projectItem)
+            expandedFileTrees.removeValue(forKey: project.id)
+            outlineView.reloadItem(projectItem, reloadChildren: true)
+        } else {
+            let root = MtFileNode(url: URL(fileURLWithPath: project.path), isDirectory: true)
+            MomentermFileOperations.loadChildren(of: root)
+            expandedFileTrees[project.id] = root
+            outlineView.reloadItem(projectItem, reloadChildren: true)
+            outlineView.expandItem(projectItem)
+        }
+    }
+
+    /// Returns the stable SidebarItem reference that NSOutlineView currently
+    /// holds for `projectId`. Returns the boxed Any value retrieved via
+    /// `item(atRow:)` so identity-sensitive APIs (expand/collapse) work.
+    fileprivate func sidebarItem(forProjectId projectId: String) -> Any? {
+        guard filteredItems == nil else { return nil }
+        for row in 0..<outlineView.numberOfRows {
+            if let cached = outlineView.item(atRow: row),
+               let si = cached as? SidebarItem,
+               case .project(let p, _) = si, p.id == projectId {
+                return cached
+            }
+        }
+        return nil
     }
 }
 
@@ -1388,7 +1915,16 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         menu.removeAllItems()
 
         let row = outlineView.clickedRow
-        guard row >= 0, let item = outlineView.item(atRow: row) as? SidebarItem else { return }
+        guard row >= 0 else { return }
+        let rawItem = outlineView.item(atRow: row)
+
+        // MtFileNode rows (inline mode): rename / trash / new file/folder / refresh.
+        if let node = rawItem as? MtFileNode {
+            populateFileNodeMenu(menu, node: node)
+            return
+        }
+
+        guard let item = rawItem as? SidebarItem else { return }
 
         switch item {
         case .space(let space):
@@ -1426,6 +1962,28 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
             fileTree.representedObject = project
             fileTree.target = self
             menu.addItem(fileTree)
+
+            // "새 파일… / 새 폴더…" — show only when this project's inline
+            // tree is actually expanded. A closed project row would otherwise
+            // create an unseen file, which is confusing.
+            if MtSidebarFileViewMode.current == .inline,
+               let projectItem = sidebarItem(forProjectId: project.id),
+               outlineView.isItemExpanded(projectItem) {
+                menu.addItem(NSMenuItem.separator())
+                let newFile = NSMenuItem(title: "새 파일…",
+                                         action: #selector(projectMenuNewFile(_:)),
+                                         keyEquivalent: "")
+                newFile.representedObject = project
+                newFile.target = self
+                menu.addItem(newFile)
+
+                let newFolder = NSMenuItem(title: "새 폴더…",
+                                           action: #selector(projectMenuNewFolder(_:)),
+                                           keyEquivalent: "")
+                newFolder.representedObject = project
+                newFolder.target = self
+                menu.addItem(newFolder)
+            }
 
             menu.addItem(NSMenuItem.separator())
             let del = NSMenuItem(title: "\u{201C}\(project.name)\u{201D} 삭제",
@@ -2120,7 +2678,9 @@ extension MomentermEmbeddedSidebarVC {
         }
 
         reloadData()
-        outlineView.expandItem(nil, expandChildren: true)
+        // `reloadData()` → `applyFilter` already expands workspaces; this call
+        // is a defensive no-op in case the filter query is non-empty.
+        expandAllWorkspaces()
     }
 
     private func parseRepoName(from urlString: String) -> String? {
@@ -2172,5 +2732,316 @@ extension MomentermEmbeddedSidebarVC {
         alert.alertStyle = .warning
         alert.addButton(withTitle: "확인")
         alert.runModal()
+    }
+}
+
+// MARK: - Inline file-tree mode (per-project file children, header strip, CRUD)
+
+extension MomentermEmbeddedSidebarVC {
+
+    // MARK: Hover-revealed action strip
+
+    /// Returns a self-contained 4-icon action overlay (new file / new folder /
+    /// refresh / collapse) positioned to the LEFT of the existing AI badge.
+    /// Uses a subtle layer-backed pill so it stays readable when it overlays
+    /// the project name on hover.
+    fileprivate func makeInlineActionStrip(rightOf aiX: CGFloat,
+                                           badgeSize: CGFloat,
+                                           rowHeight: CGFloat) -> NSView {
+        // Single-icon strip (refresh only). "모두 접기" was removed at user
+        // request and "새 파일 / 새 폴더" moved to the project's right-click
+        // menu, so the strip is just a quiet refresh affordance next to the
+        // AI badge. No tinted backdrop; this isn't a featured action.
+        let gap: CGFloat = 3
+        let actions: [(String, String, Selector)] = [
+            ("arrow.clockwise", "새로고침", #selector(inlineRefreshTapped(_:))),
+        ]
+        let contentW = CGFloat(actions.count) * badgeSize + CGFloat(actions.count - 1) * gap
+        let stripW = contentW
+        let stripH = badgeSize + 4
+        // Right edge sits just left of the AI badge with a 4px gap.
+        let stripX = aiX - 4 - stripW
+        let stripY = (rowHeight - stripH) / 2.0
+        let container = NSView(frame: NSRect(x: stripX, y: stripY, width: stripW, height: stripH))
+        container.autoresizingMask = [.minXMargin]
+
+        let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
+        var x: CGFloat = 0
+        for (symbol, tip, action) in actions {
+            let btn = NSButton(frame: NSRect(x: x, y: (stripH - badgeSize) / 2.0,
+                                              width: badgeSize, height: badgeSize))
+            btn.isBordered = false
+            btn.imagePosition = .imageOnly
+            btn.imageScaling = .scaleProportionallyUpOrDown
+            btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
+                .withSymbolConfiguration(cfg)
+            btn.contentTintColor = .secondaryLabelColor
+            btn.toolTip = tip
+            btn.target = self
+            btn.action = action
+            container.addSubview(btn)
+            x += badgeSize + gap
+        }
+        return container
+    }
+
+    // MARK: Sender → owning project
+
+    /// Resolves the (project, space, rootURL) triple for an action button that
+    /// lives inside a project cell.
+    private func projectContext(for sender: Any) -> (MomentermProject, MomentermProjectSpace)? {
+        guard let view = sender as? NSView else { return nil }
+        var v: NSView? = view
+        while let cur = v, !(cur is NSTableCellView) { v = cur.superview }
+        guard let cell = v else { return nil }
+        let row = outlineView.row(for: cell)
+        guard row >= 0,
+              let item = outlineView.item(atRow: row) as? SidebarItem,
+              case .project(let project, let space) = item else { return nil }
+        return (project, space)
+    }
+
+    // MARK: Inline action handlers
+
+    @objc fileprivate func inlineNewFileTapped(_ sender: Any) {
+        guard let (project, _) = projectContext(for: sender) else { return }
+        promptCreateInProject(project, isFolder: false)
+    }
+
+    @objc fileprivate func inlineNewFolderTapped(_ sender: Any) {
+        guard let (project, _) = projectContext(for: sender) else { return }
+        promptCreateInProject(project, isFolder: true)
+    }
+
+    // Project right-click menu entries (replaces the strip-side buttons in the
+    // new layout). Resolved via the NSMenuItem's representedObject rather than
+    // by walking the cell tree, since the menu lives outside the table view.
+    @objc fileprivate func projectMenuNewFile(_ sender: NSMenuItem) {
+        guard let project = sender.representedObject as? MomentermProject else { return }
+        promptCreateInProject(project, isFolder: false)
+    }
+
+    @objc fileprivate func projectMenuNewFolder(_ sender: NSMenuItem) {
+        guard let project = sender.representedObject as? MomentermProject else { return }
+        promptCreateInProject(project, isFolder: true)
+    }
+
+    @objc fileprivate func inlineRefreshTapped(_ sender: Any) {
+        guard let (project, _) = projectContext(for: sender) else { return }
+        refreshInlineTree(forProjectId: project.id)
+    }
+
+    @objc fileprivate func inlineCollapseTapped(_ sender: Any) {
+        guard let (project, _) = projectContext(for: sender) else { return }
+        toggleInlineFileTree(for: project)
+    }
+
+    // MARK: File-node context-menu population (called from menuNeedsUpdate)
+
+    fileprivate func populateFileNodeMenu(_ menu: NSMenu, node: MtFileNode) {
+        let rename = NSMenuItem(title: "이름 변경",
+                                action: #selector(fileNodeRename(_:)), keyEquivalent: "")
+        rename.representedObject = node
+        rename.target = self
+        menu.addItem(rename)
+
+        let trash = NSMenuItem(title: "휴지통으로 이동",
+                               action: #selector(fileNodeTrash(_:)), keyEquivalent: "")
+        trash.representedObject = node
+        trash.target = self
+        menu.addItem(trash)
+
+        if node.isDirectory {
+            menu.addItem(NSMenuItem.separator())
+            let newFile = NSMenuItem(title: "새 파일…",
+                                     action: #selector(fileNodeNewFile(_:)), keyEquivalent: "")
+            newFile.representedObject = node
+            newFile.target = self
+            menu.addItem(newFile)
+
+            let newFolder = NSMenuItem(title: "새 폴더…",
+                                       action: #selector(fileNodeNewFolder(_:)), keyEquivalent: "")
+            newFolder.representedObject = node
+            newFolder.target = self
+            menu.addItem(newFolder)
+        }
+    }
+
+    @objc fileprivate func fileNodeRename(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode,
+              let projectId = projectIdContaining(node: node) else { return }
+        promptRename(node, projectId: projectId)
+    }
+
+    @objc fileprivate func fileNodeTrash(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode,
+              let projectId = projectIdContaining(node: node) else { return }
+        confirmAndTrash(node, projectId: projectId)
+    }
+
+    @objc fileprivate func fileNodeNewFile(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode,
+              node.isDirectory,
+              let projectId = projectIdContaining(node: node) else { return }
+        promptCreate(in: node.url, isFolder: false, projectId: projectId)
+    }
+
+    @objc fileprivate func fileNodeNewFolder(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode,
+              node.isDirectory,
+              let projectId = projectIdContaining(node: node) else { return }
+        promptCreate(in: node.url, isFolder: true, projectId: projectId)
+    }
+
+    // MARK: Project resolution for file nodes
+
+    /// Returns the project id whose inline tree contains `node`, if any.
+    /// Used to scope refresh after a mutation to the right row.
+    private func projectIdContaining(node: MtFileNode) -> String? {
+        for (projectId, root) in expandedFileTrees {
+            if isNode(node, descendantOf: root) { return projectId }
+        }
+        return nil
+    }
+
+    private func isNode(_ node: MtFileNode, descendantOf parent: MtFileNode) -> Bool {
+        if node === parent { return true }
+        for child in parent.children ?? [] {
+            if isNode(node, descendantOf: child) { return true }
+        }
+        return false
+    }
+
+    // MARK: Prompts
+
+    private func promptCreateInProject(_ project: MomentermProject, isFolder: Bool) {
+        promptCreate(in: URL(fileURLWithPath: project.path),
+                     isFolder: isFolder,
+                     projectId: project.id)
+    }
+
+    private func promptCreate(in parentDir: URL, isFolder: Bool, projectId: String) {
+        let alert = NSAlert()
+        alert.messageText = isFolder ? "새 폴더" : "새 파일"
+        alert.informativeText = "\u{201C}\((parentDir.path as NSString).abbreviatingWithTildeInPath)\u{201D} 안에 만들기"
+        alert.addButton(withTitle: "만들기")
+        alert.addButton(withTitle: "취소")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = isFolder ? "새 폴더" : "untitled.txt"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let created: URL = try isFolder
+                ? MomentermFileOperations.createFolder(in: parentDir, name: field.stringValue)
+                : MomentermFileOperations.createFile(in: parentDir, name: field.stringValue)
+            refreshInlineTree(forProjectId: projectId, reveal: created)
+        } catch {
+            presentInlineError(error)
+        }
+    }
+
+    private func promptRename(_ node: MtFileNode, projectId: String) {
+        let alert = NSAlert()
+        alert.messageText = "\u{201C}\(node.displayName)\u{201D} 이름 변경"
+        alert.addButton(withTitle: "변경")
+        alert.addButton(withTitle: "취소")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = node.displayName
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let newURL = try MomentermFileOperations.rename(node.url, to: field.stringValue)
+            refreshInlineTree(forProjectId: projectId, reveal: newURL)
+        } catch {
+            presentInlineError(error)
+        }
+    }
+
+    private func confirmAndTrash(_ node: MtFileNode, projectId: String) {
+        let alert = NSAlert()
+        alert.messageText = "\u{201C}\(node.displayName)\u{201D}을(를) 휴지통으로 이동하시겠습니까?"
+        alert.informativeText = "휴지통에서 복원할 수 있습니다."
+        alert.addButton(withTitle: "휴지통으로 이동")
+        alert.addButton(withTitle: "취소")
+        alert.buttons[0].hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        MomentermFileOperations.moveToTrash(node.url) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success:
+                self.refreshInlineTree(forProjectId: projectId)
+            case .failure(let error):
+                self.presentInlineError(error)
+            }
+        }
+    }
+
+    private func presentInlineError(_ error: Error) {
+        NSAlert(error: error).runModal()
+    }
+
+    // MARK: Refresh
+
+    /// Re-reads the filesystem for the given project's inline tree while
+    /// preserving expansion state, then optionally selects `reveal`.
+    private func refreshInlineTree(forProjectId projectId: String, reveal: URL? = nil) {
+        guard let root = expandedFileTrees[projectId] else { return }
+        let expandedPaths = collectExpandedFilePaths(within: root)
+        root.children = nil
+        MomentermFileOperations.loadChildren(of: root)
+        guard let projectItem = sidebarItem(forProjectId: projectId) else {
+            outlineView.reloadData()
+            return
+        }
+        outlineView.reloadItem(projectItem, reloadChildren: true)
+        outlineView.expandItem(projectItem)
+        reExpandFileTree(root: root, expandedPaths: expandedPaths)
+        if let target = reveal { revealFileNode(at: target, in: root) }
+    }
+
+    private func collectExpandedFilePaths(within root: MtFileNode) -> Set<String> {
+        var paths: Set<String> = []
+        for row in 0..<outlineView.numberOfRows {
+            guard let node = outlineView.item(atRow: row) as? MtFileNode,
+                  node.isDirectory,
+                  isNode(node, descendantOf: root),
+                  outlineView.isItemExpanded(node) else { continue }
+            paths.insert(node.url.path)
+        }
+        return paths
+    }
+
+    private func reExpandFileTree(root: MtFileNode, expandedPaths: Set<String>) {
+        if root.children == nil { MomentermFileOperations.loadChildren(of: root) }
+        for child in root.children ?? [] where child.isDirectory {
+            if expandedPaths.contains(child.url.path) {
+                outlineView.expandItem(child)
+                reExpandFileTree(root: child, expandedPaths: expandedPaths)
+            }
+        }
+    }
+
+    private func revealFileNode(at url: URL, in root: MtFileNode) {
+        let rootComps = root.url.standardizedFileURL.pathComponents
+        let urlComps = url.standardizedFileURL.pathComponents
+        guard urlComps.count > rootComps.count,
+              Array(urlComps.prefix(rootComps.count)) == rootComps else { return }
+        var current: MtFileNode = root
+        for component in urlComps.dropFirst(rootComps.count) {
+            if current.children == nil { MomentermFileOperations.loadChildren(of: current) }
+            guard let next = current.children?.first(where: { $0.displayName == component }) else { return }
+            if next.url.standardizedFileURL == url.standardizedFileURL {
+                let row = outlineView.row(forItem: next)
+                if row >= 0 {
+                    outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                    outlineView.scrollRowToVisible(row)
+                }
+                return
+            }
+            outlineView.expandItem(next)
+            current = next
+        }
     }
 }

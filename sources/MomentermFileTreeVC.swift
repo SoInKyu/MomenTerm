@@ -16,43 +16,8 @@ import AppKit
     func fileTreeDidRequestOpenEditorAtPath(_ path: String)
 }
 
-// MARK: - FileNode (private model)
-
-private final class FileNode {
-    let url: URL
-    let isDirectory: Bool
-    var children: [FileNode]?   // nil = not yet loaded; [] = loaded, empty
-
-    init(url: URL, isDirectory: Bool) {
-        self.url = url
-        self.isDirectory = isDirectory
-    }
-
-    var displayName: String { url.lastPathComponent }
-}
-
-// MARK: - Smart filter
-
-private let kFilteredDirs: Set<String> = [
-    "node_modules", ".git", ".svn", ".hg",
-    "dist", "build", ".build", "Pods", "DerivedData",
-    ".next", ".nuxt", "__pycache__", ".tox", "vendor",
-    ".idea", ".vscode", ".expo", "coverage", ".nyc_output"
-]
-
-private let kFilteredFileNames: Set<String> = [".DS_Store", "Thumbs.db", "desktop.ini"]
-private let kFilteredExtensions: Set<String> = ["pyc", "o", "class", "a", "dylib", "so"]
-
-private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
-    let name = url.lastPathComponent
-    if name.hasPrefix(".") && isDirectory { return kFilteredDirs.contains(name) }
-    if isDirectory { return kFilteredDirs.contains(name) }
-    if kFilteredFileNames.contains(name) { return true }
-    if name.hasSuffix(".swp") || name.hasSuffix(".swo") { return true }
-    return kFilteredExtensions.contains(url.pathExtension.lowercased())
-}
-
 // MARK: - View Controller
+// File node model + filter live in MomentermFileOperations.swift (MtFileNode + MtFileFilter).
 
 @objc final class MomentermFileTreeVC: NSViewController {
 
@@ -71,6 +36,7 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
     private var headerSeparator: NSBox!
     private var titleLabel: NSTextField!
     private var closeButton: NSButton!
+    private var headerActions: MomentermFileTreeHeaderActions!
     private var treeScrollView: NSScrollView!
     private var outlineView: NSOutlineView!
     private var editorSeparator: NSBox!
@@ -84,7 +50,7 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
     private var rightBorderBox: NSBox!
 
     // MARK: - State
-    private var rootNode: FileNode!
+    private var rootNode: MtFileNode!
     private var currentFileURL: URL?
     private var isDirty = false
     private var editorIsOpen = false
@@ -112,8 +78,8 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
     // MARK: - Lifecycle
 
     override func loadView() {
-        rootNode = FileNode(url: URL(fileURLWithPath: rootPath), isDirectory: true)
-        loadChildren(of: rootNode)
+        rootNode = MtFileNode(url: URL(fileURLWithPath: rootPath), isDirectory: true)
+        MomentermFileOperations.loadChildren(of: rootNode)
         let frame = NSRect(x: 0, y: 0, width: kPanelW, height: 400)
         view = NSView(frame: frame)
         view.wantsLayer = true
@@ -158,6 +124,12 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
         closeButton.action = #selector(closeTapped)
         closeButton.autoresizingMask = [.minXMargin]
         header.addSubview(closeButton)
+
+        headerActions = MomentermFileTreeHeaderActions(frame: .zero)
+        headerActions.delegate = self
+        headerActions.autoresizingMask = [.minXMargin]
+        header.addSubview(headerActions)
+
         view.addSubview(header)
         headerView = header
 
@@ -178,6 +150,10 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
         outlineView.target = self
         outlineView.action = #selector(fileClicked)
         outlineView.intercellSpacing = NSSize(width: 0, height: 1)
+
+        let menu = NSMenu()
+        menu.delegate = self
+        outlineView.menu = menu
 
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("FileCol"))
         col.isEditable = false
@@ -276,9 +252,15 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
         let h = view.bounds.height
 
         // Header at top
+        let actionsW = MomentermFileTreeHeaderActions.intrinsicWidth
+        let closeX = w - 28
+        let actionsX = closeX - actionsW - 6
         headerView.frame = NSRect(x: 0, y: h - kHeaderH, width: w, height: kHeaderH)
-        titleLabel.frame = NSRect(x: 10, y: (kHeaderH - 16) / 2, width: w - 40, height: 16)
-        closeButton.frame = NSRect(x: w - 28, y: (kHeaderH - 20) / 2, width: 20, height: 20)
+        titleLabel.frame = NSRect(x: 10, y: (kHeaderH - 16) / 2,
+                                   width: max(0, actionsX - 14), height: 16)
+        headerActions.frame = NSRect(x: actionsX, y: (kHeaderH - 20) / 2,
+                                     width: actionsW, height: 20)
+        closeButton.frame = NSRect(x: closeX, y: (kHeaderH - 20) / 2, width: 20, height: 20)
 
         // Separator just below header
         headerSeparator.frame = NSRect(x: 0, y: h - kHeaderH - kSepH, width: w, height: kSepH)
@@ -314,32 +296,6 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
         applyLayout()
     }
 
-    // MARK: - File loading
-
-    private func loadChildren(of node: FileNode) {
-        guard node.isDirectory else { return }
-        let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: node.url,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: []
-        ) else {
-            node.children = []
-            return
-        }
-        var nodes: [FileNode] = []
-        for url in contents {
-            let isDir = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            if shouldFilterNode(url: url, isDirectory: isDir) { continue }
-            nodes.append(FileNode(url: url, isDirectory: isDir))
-        }
-        // Directories first, then alphabetical
-        node.children = nodes.sorted { a, b in
-            if a.isDirectory != b.isDirectory { return a.isDirectory }
-            return a.displayName.localizedCaseInsensitiveCompare(b.displayName) == .orderedAscending
-        }
-    }
-
     // MARK: - Actions
 
     @objc private func closeTapped() {
@@ -360,7 +316,7 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
     @objc private func fileClicked() {
         let row = outlineView.clickedRow
         guard row >= 0,
-              let node = outlineView.item(atRow: row) as? FileNode,
+              let node = outlineView.item(atRow: row) as? MtFileNode,
               !node.isDirectory else { return }
         fileTreeDelegate?.fileTreeDidRequestOpenEditorAtPath(node.url.path)
     }
@@ -430,19 +386,19 @@ private func shouldFilterNode(url: URL, isDirectory: Bool) -> Bool {
 extension MomentermFileTreeVC: NSOutlineViewDataSource {
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        let node = (item as? FileNode) ?? rootNode
-        if node?.children == nil { loadChildren(of: node!) }
+        let node = (item as? MtFileNode) ?? rootNode
+        if node?.children == nil, let node = node { MomentermFileOperations.loadChildren(of: node) }
         return node?.children?.count ?? 0
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        let node = (item as? FileNode) ?? rootNode!
-        if node.children == nil { loadChildren(of: node) }
+        let node = (item as? MtFileNode) ?? rootNode!
+        if node.children == nil { MomentermFileOperations.loadChildren(of: node) }
         return node.children![index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        (item as? FileNode)?.isDirectory ?? false
+        (item as? MtFileNode)?.isDirectory ?? false
     }
 }
 
@@ -453,7 +409,7 @@ extension MomentermFileTreeVC: NSOutlineViewDelegate {
     func outlineView(_ outlineView: NSOutlineView,
                      viewFor tableColumn: NSTableColumn?,
                      item: Any) -> NSView? {
-        guard let node = item as? FileNode else { return nil }
+        guard let node = item as? MtFileNode else { return nil }
 
         let id = NSUserInterfaceItemIdentifier("MtFileCell")
         let cell: NSTableCellView
@@ -486,11 +442,11 @@ extension MomentermFileTreeVC: NSOutlineViewDelegate {
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        guard let node = item as? FileNode else { return false }
+        guard let node = item as? MtFileNode else { return false }
         return !node.isDirectory
     }
 
-    private func symbolName(for node: FileNode) -> String {
+    private func symbolName(for node: MtFileNode) -> String {
         if node.isDirectory { return "folder.fill" }
         switch node.url.pathExtension.lowercased() {
         case "swift":                      return "swift"
@@ -654,5 +610,271 @@ extension MomentermFileTreeVC: NSWindowDelegate {
         if r == .alertFirstButtonReturn { saveFloatingFile(); return true }
         else if r == .alertSecondButtonReturn { floatingIsDirty = false; return true }
         return false
+    }
+}
+
+// MARK: - Context menu + CRUD + Refresh + Collapse
+
+extension MomentermFileTreeVC: NSMenuDelegate, MomentermFileTreeHeaderActionsDelegate {
+
+    // MARK: NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let clicked = outlineView.clickedRow
+        if clicked >= 0, let node = outlineView.item(atRow: clicked) as? MtFileNode {
+            // File / folder context: rename + trash, plus contextual create + refresh
+            let rename = NSMenuItem(title: "이름 변경",
+                                    action: #selector(menuRename(_:)), keyEquivalent: "")
+            rename.representedObject = node
+            rename.target = self
+            menu.addItem(rename)
+
+            let trash = NSMenuItem(title: "휴지통으로 이동",
+                                   action: #selector(menuTrash(_:)), keyEquivalent: "")
+            trash.representedObject = node
+            trash.target = self
+            menu.addItem(trash)
+
+            if node.isDirectory {
+                menu.addItem(NSMenuItem.separator())
+                let newFile = NSMenuItem(title: "새 파일…",
+                                         action: #selector(menuNewFileInFolder(_:)), keyEquivalent: "")
+                newFile.representedObject = node
+                newFile.target = self
+                menu.addItem(newFile)
+
+                let newFolder = NSMenuItem(title: "새 폴더…",
+                                           action: #selector(menuNewFolderInFolder(_:)), keyEquivalent: "")
+                newFolder.representedObject = node
+                newFolder.target = self
+                menu.addItem(newFolder)
+            }
+
+            menu.addItem(NSMenuItem.separator())
+            let refresh = NSMenuItem(title: "새로고침",
+                                     action: #selector(menuRefresh(_:)), keyEquivalent: "")
+            refresh.target = self
+            menu.addItem(refresh)
+        } else {
+            // Empty area: root-level create actions
+            let newFile = NSMenuItem(title: "새 파일…",
+                                     action: #selector(menuNewFileInRoot(_:)), keyEquivalent: "")
+            newFile.target = self
+            menu.addItem(newFile)
+
+            let newFolder = NSMenuItem(title: "새 폴더…",
+                                       action: #selector(menuNewFolderInRoot(_:)), keyEquivalent: "")
+            newFolder.target = self
+            menu.addItem(newFolder)
+
+            menu.addItem(NSMenuItem.separator())
+            let refresh = NSMenuItem(title: "새로고침",
+                                     action: #selector(menuRefresh(_:)), keyEquivalent: "")
+            refresh.target = self
+            menu.addItem(refresh)
+
+            let collapse = NSMenuItem(title: "모두 접기",
+                                      action: #selector(menuCollapseAll(_:)), keyEquivalent: "")
+            collapse.target = self
+            menu.addItem(collapse)
+        }
+    }
+
+    // MARK: Menu actions
+
+    @objc private func menuRename(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode else { return }
+        promptRename(node)
+    }
+
+    @objc private func menuTrash(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode else { return }
+        confirmAndTrash(node)
+    }
+
+    @objc private func menuNewFileInFolder(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode else { return }
+        promptCreate(parentDir: node.url, isFolder: false)
+    }
+
+    @objc private func menuNewFolderInFolder(_ sender: NSMenuItem) {
+        guard let node = sender.representedObject as? MtFileNode else { return }
+        promptCreate(parentDir: node.url, isFolder: true)
+    }
+
+    @objc private func menuNewFileInRoot(_ sender: NSMenuItem) {
+        promptCreate(parentDir: rootNode.url, isFolder: false)
+    }
+
+    @objc private func menuNewFolderInRoot(_ sender: NSMenuItem) {
+        promptCreate(parentDir: rootNode.url, isFolder: true)
+    }
+
+    @objc private func menuRefresh(_ sender: NSMenuItem) { refreshTree() }
+
+    @objc private func menuCollapseAll(_ sender: NSMenuItem) { collapseAll() }
+
+    // MARK: MomentermFileTreeHeaderActionsDelegate
+
+    func fileTreeActionsDidRequestNewFile() {
+        promptCreate(parentDir: currentTargetDirectory(), isFolder: false)
+    }
+
+    func fileTreeActionsDidRequestNewFolder() {
+        promptCreate(parentDir: currentTargetDirectory(), isFolder: true)
+    }
+
+    func fileTreeActionsDidRequestRefresh() { refreshTree() }
+
+    func fileTreeActionsDidRequestCollapseAll() { collapseAll() }
+
+    // MARK: Target resolution
+
+    /// Resolves the directory that a header-bar "new file/folder" action targets.
+    /// Priority: selected directory → parent of selected file → root.
+    private func currentTargetDirectory() -> URL {
+        let row = outlineView.selectedRow
+        if row >= 0, let node = outlineView.item(atRow: row) as? MtFileNode {
+            return node.isDirectory ? node.url : node.url.deletingLastPathComponent()
+        }
+        return rootNode.url
+    }
+
+    // MARK: Prompts
+
+    private func promptCreate(parentDir: URL, isFolder: Bool) {
+        let alert = NSAlert()
+        alert.messageText = isFolder ? "새 폴더" : "새 파일"
+        alert.informativeText = "\u{201C}\((parentDir.path as NSString).abbreviatingWithTildeInPath)\u{201D} 안에 만들기"
+        alert.addButton(withTitle: "만들기")
+        alert.addButton(withTitle: "취소")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = isFolder ? "새 폴더" : "untitled.txt"
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = field.stringValue
+        do {
+            let url: URL
+            if isFolder {
+                url = try MomentermFileOperations.createFolder(in: parentDir, name: name)
+            } else {
+                url = try MomentermFileOperations.createFile(in: parentDir, name: name)
+            }
+            refreshTree(revealing: url)
+        } catch {
+            presentFileOpError(error)
+        }
+    }
+
+    private func promptRename(_ node: MtFileNode) {
+        let alert = NSAlert()
+        alert.messageText = "\u{201C}\(node.displayName)\u{201D} 이름 변경"
+        alert.addButton(withTitle: "변경")
+        alert.addButton(withTitle: "취소")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = node.displayName
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do {
+            let newURL = try MomentermFileOperations.rename(node.url, to: field.stringValue)
+            refreshTree(revealing: newURL)
+        } catch {
+            presentFileOpError(error)
+        }
+    }
+
+    private func confirmAndTrash(_ node: MtFileNode) {
+        let alert = NSAlert()
+        alert.messageText = "\u{201C}\(node.displayName)\u{201D}을(를) 휴지통으로 이동하시겠습니까?"
+        alert.informativeText = "휴지통에서 복원할 수 있습니다."
+        alert.addButton(withTitle: "휴지통으로 이동")
+        alert.addButton(withTitle: "취소")
+        alert.buttons[0].hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        MomentermFileOperations.moveToTrash(node.url) { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success:
+                self.refreshTree()
+            case .failure(let error):
+                self.presentFileOpError(error)
+            }
+        }
+    }
+
+    private func presentFileOpError(_ error: Error) {
+        let alert = NSAlert(error: error)
+        alert.runModal()
+    }
+
+    // MARK: Refresh / Collapse
+
+    /// Refreshes the tree from the filesystem while preserving expansion state
+    /// (where the same paths still exist). Optionally selects and scrolls to
+    /// `revealing` if provided.
+    func refreshTree(revealing: URL? = nil) {
+        let expandedPaths = collectExpandedPaths()
+        rootNode.children = nil
+        MomentermFileOperations.loadChildren(of: rootNode)
+        outlineView.reloadData()
+        // Re-expand root and preserved paths.
+        outlineView.expandItem(nil, expandChildren: false)
+        reExpand(paths: expandedPaths, in: rootNode)
+        if let target = revealing { selectAndScroll(to: target) }
+    }
+
+    private func collectExpandedPaths() -> Set<String> {
+        var paths: Set<String> = []
+        for row in 0..<outlineView.numberOfRows {
+            guard let node = outlineView.item(atRow: row) as? MtFileNode,
+                  node.isDirectory,
+                  outlineView.isItemExpanded(node) else { continue }
+            paths.insert(node.url.path)
+        }
+        return paths
+    }
+
+    private func reExpand(paths: Set<String>, in node: MtFileNode) {
+        guard node.isDirectory else { return }
+        if node.children == nil { MomentermFileOperations.loadChildren(of: node) }
+        for child in node.children ?? [] where child.isDirectory {
+            if paths.contains(child.url.path) {
+                outlineView.expandItem(child)
+                reExpand(paths: paths, in: child)
+            }
+        }
+    }
+
+    private func selectAndScroll(to url: URL) {
+        // Walk the visible tree, expanding parents along the way.
+        let components = url.standardizedFileURL.pathComponents
+        let rootComponents = rootNode.url.standardizedFileURL.pathComponents
+        guard components.count > rootComponents.count,
+              Array(components.prefix(rootComponents.count)) == rootComponents else { return }
+        var current: MtFileNode = rootNode
+        for component in components.dropFirst(rootComponents.count) {
+            if current.children == nil { MomentermFileOperations.loadChildren(of: current) }
+            guard let next = current.children?.first(where: { $0.displayName == component }) else { return }
+            if next.url.standardizedFileURL == url.standardizedFileURL {
+                let row = outlineView.row(forItem: next)
+                if row >= 0 {
+                    outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+                    outlineView.scrollRowToVisible(row)
+                }
+                return
+            }
+            outlineView.expandItem(next)
+            current = next
+        }
+    }
+
+    func collapseAll() {
+        // Collapse every top-level (and transitively, children) node.
+        for child in rootNode.children ?? [] where child.isDirectory {
+            outlineView.collapseItem(child, collapseChildren: true)
+        }
     }
 }

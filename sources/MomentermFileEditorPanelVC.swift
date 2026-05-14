@@ -100,7 +100,8 @@ protocol MomentermFileEditorPanelDelegate: AnyObject {
         bar.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
         bar.autoresizingMask = [.width, .minYMargin]
 
-        // Layout (right → left): [X close 20] [10] [detach 20] [10] [save btn 48] [10] [preview 20] [10] [label fills rest]
+        // Layout (right → left): [X close 20] [10] [save btn 48] [10] [preview 20] [10] [label fills rest]
+        // (Detach button removed; the layout shifts skip its slot entirely.)
         let iconSz: CGFloat = 20
         let saveBtnW: CGFloat = 48
         let btnH: CGFloat = 22
@@ -114,17 +115,15 @@ protocol MomentermFileEditorPanelDelegate: AnyObject {
         closeBtn.target = self
         closeBtn.action = #selector(closeTapped)
         bar.addSubview(closeBtn)
-        nextX -= pad + iconSz
-
-        // Detach toggle button
-        let detachButton = Self.iconBtn(symbol: "rectangle.portrait.and.arrow.right", desc: "분리", size: 13)
-        detachButton.frame = NSRect(x: nextX, y: (barH - iconSz) / 2, width: iconSz, height: iconSz)
-        detachButton.autoresizingMask = .minXMargin
-        detachButton.target = self
-        detachButton.action = #selector(detachTapped)
-        bar.addSubview(detachButton)
-        detachBtn = detachButton
+        // Detach slot removed — jump straight to the save-button slot. With
+        // the old `pad + iconSz` shift the save button (48 wide) collided with
+        // the close button; the correct shift is `pad + saveBtnW`.
         nextX -= pad + saveBtnW
+
+        // Detach toggle button — hidden by product request. Detach plumbing
+        // (isDetached, delegate methods) is kept so the feature can be
+        // reinstated later without rewiring the host.
+        detachBtn = nil
 
         // Save text button
         let saveBtnView = HandCursorButton(frame: NSRect(x: nextX, y: (barH - btnH) / 2, width: saveBtnW, height: btnH))

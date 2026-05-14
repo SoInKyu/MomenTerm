@@ -1661,6 +1661,22 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     _contentView.momentermFileTreeContainer = _momentermFileTreeVC.view;
 }
 
+- (void)sidebarDidRequestOpenFileWithFilePath:(NSString *)filePath
+                                  projectPath:(NSString *)projectPath
+                                  projectName:(NSString *)projectName {
+    // Reuse the persistent right-side file editor that the file-tree panel
+    // already drives via fileTreeDidRequestOpenEditorAtPath:. projectPath /
+    // projectName are accepted for future use (e.g. panel titling) — currently
+    // unused here.
+    NSURL *url = [NSURL fileURLWithPath:filePath];
+    if (![_momentermFileEditorVC setFileURL:url]) {
+        return;
+    }
+    if (!_contentView.shouldShowMomentermFileEditorPanel) {
+        [self it_setMomentermRightPanel:@"fileeditor"];
+    }
+}
+
 - (void)fileTreeDidRequestOpenEditorAtPath:(NSString *)path {
     NSURL *url = [NSURL fileURLWithPath:path];
     // Load the file into the persistent right-side editor panel. If the user

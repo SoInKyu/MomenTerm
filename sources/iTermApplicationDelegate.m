@@ -1067,6 +1067,9 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
         DLog(@"Opening untitled files is disabled");
         return NO;
     }
+    if ([self momenterm_showWelcomeIfApplicable]) {
+        return YES;
+    }
     [_untitledWindowStateMachine maybeOpenUntitledFile];
     return YES;
 }
@@ -2159,6 +2162,20 @@ static iTermKeyEventReplayer *gReplayer;
     }
 }
 
+// MomenTerm: replace the default untitled terminal with a workspace-selection
+// welcome window. Returns YES if the welcome window was shown (caller should
+// then skip the regular untitled-window path).
+- (BOOL)momenterm_showWelcomeIfApplicable {
+    if ([self isAppleScriptTestApp]) {
+        return NO;
+    }
+    if ([[NSApplication sharedApplication] isRunningUnitTests]) {
+        return NO;
+    }
+    [MomentermWelcomeWindowController showSharedWelcome];
+    return YES;
+}
+
 // This performs startup activities as long as they haven't been run before.
 - (void)performStartupActivities {
     DLog(@"performStartupActivities");
@@ -2211,8 +2228,12 @@ static iTermKeyEventReplayer *gReplayer;
     } else if ([self shouldOpenUntitledFileAfterRunningAutoLaunchScripts:ranAutoLaunchScripts]) {
         // This opens the initial untitled window when needed. -applicationOpenUntitledFile is
         // called for both the initial window (unreliably) and also when clicking on the dock with
-        // no windows.
-        [_untitledWindowStateMachine maybeOpenUntitledFile];
+        // no windows. MomenTerm replaces the default untitled terminal with a
+        // workspace-selection welcome window; the original PTY-bearing untitled
+        // window only opens when the welcome path opts out (tests, AppleScript).
+        if (![self momenterm_showWelcomeIfApplicable]) {
+            [_untitledWindowStateMachine maybeOpenUntitledFile];
+        }
     }
     [_untitledWindowStateMachine didFinishInitialization];
 
