@@ -32,16 +32,26 @@ import AppKit
     @objc static var hasActiveWelcomeWindow: Bool { shared != nil }
 
     init() {
-        let initialRect = NSRect(x: 0, y: 0, width: 880, height: 540)
+        // First-launch size is chosen to match what an iTerm terminal window
+        // naturally opens at (160 cols × 50 rows default profile + 220 sidebar
+        // + 30 bottom strip + chrome). Keeping welcome and terminal the same
+        // size means the transition from welcome → terminal only changes the
+        // contents, not the geometry — no jarring resize.
+        // Subsequent launches reuse whatever frame the user dragged to via
+        // `setFrameAutosaveName` below.
+        let initialRect = NSRect(x: 0, y: 0, width: 1280, height: 780)
         let style: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         let window = NSWindow(contentRect: initialRect,
                               styleMask: style,
                               backing: .buffered,
                               defer: false)
         window.title = "MomenTerm"
-        window.minSize = NSSize(width: 560, height: 360)
+        window.minSize = NSSize(width: 720, height: 480)
         window.center()
-        window.setFrameAutosaveName("MomentermWelcomeWindow")
+        // V2: the v1 autosave saved the old 880×540 default. Bumping the name
+        // makes existing users adopt the terminal-sized default below; once
+        // they resize, the new key persists their preference normally.
+        window.setFrameAutosaveName("MomentermWelcomeWindowV2")
 
         super.init(window: window)
 
@@ -121,14 +131,26 @@ import AppKit
             profile[KEY_INITIAL_TEXT] = ai
         }
 
-        // Launch the terminal first so the new window is visible before the
-        // welcome window disappears — avoids the "blank screen flash" caused
-        // by closing first and then opening.
+        // The user's mental model is "this window is becoming a terminal",
+        // not "a new window opens elsewhere". So we capture our own frame,
+        // hide ourselves instantly (no fade), and graft that frame onto the
+        // new terminal window inside the launcher's didMakeSession callback
+        // — which fires synchronously, BEFORE iTerm's async makeKeyAndOrderFront
+        // runs. The end result: the terminal appears in the welcome window's
+        // exact on-screen slot, so it looks like the window just changed
+        // contents rather than being replaced by one in a different space.
+        let targetFrame = window?.frame
+        window?.orderOut(nil)
+
         iTermSessionLauncher.launchBookmark(profile,
                                             in: nil,
-                                            respectTabbingMode: false,
-                                            completion: nil)
-        close()
+                                            respectTabbingMode: false) { [weak self] session in
+            if let frame = targetFrame,
+               let newWindow = session.delegate?.realParentWindow()?.window {
+                newWindow.setFrame(frame, display: false, animate: false)
+            }
+            self?.close()
+        }
     }
 
     private func colorForSpaceName(_ spaceName: String) -> NSColor {
