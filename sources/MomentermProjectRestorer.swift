@@ -307,6 +307,8 @@ import AppKit
         profile[KEY_WORKING_DIRECTORY] = effectiveCWD
         profile[KEY_NAME] = project.name
         profile[KEY_ALLOW_TITLE_SETTING] = NSNumber(value: false)
+        // Tab title: SessionName | Job → "<project> (<job>)" (matches PseudoTerminal.m).
+        profile[KEY_TITLE_COMPONENTS] = NSNumber(value: 3)
         if let cmd = aiCommand, !cmd.isEmpty {
             profile[KEY_INITIAL_TEXT] = cmd
         }

@@ -1585,11 +1585,13 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [self it_refitAllSessionsAfterMomentermLayoutChange];
 }
 
-// Returns a stable pastel color derived from the space name.
+// Returns a stable muted color derived from the space name. Saturation/brightness
+// are tuned low so the tab tint sits in the soft pastel zone (mint, lavender,
+// dusty rose…) instead of vivid magenta/cyan, matching MomenTerm's reference look.
 - (NSColor *)it_momentermColorForSpaceName:(NSString *)spaceName {
     NSUInteger h = [spaceName hash];
     CGFloat hue = (CGFloat)(h % 360) / 360.0;
-    return [NSColor colorWithHue:hue saturation:0.45 brightness:0.85 alpha:1.0];
+    return [NSColor colorWithHue:hue saturation:0.32 brightness:0.78 alpha:1.0];
 }
 
 // Returns a modified copy of the current session's profile (or defaultBookmark) that:
@@ -1609,6 +1611,11 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     modified = [modified dictionaryBySettingObject:colorDict forKey:KEY_TAB_COLOR];
     // Prevent shell/program (e.g. Claude Code) from overriding the tab title via OSC sequences.
     modified = [modified dictionaryBySettingObject:@NO forKey:KEY_ALLOW_TITLE_SETTING];
+    // Show the project (session) name in the tab — and the live job name in parens —
+    // instead of the default "Job only" composition that surfaces "node" / "zsh".
+    NSUInteger projectTitleComponents = iTermTitleComponentsSessionName | iTermTitleComponentsJob;
+    modified = [modified dictionaryBySettingObject:@(projectTitleComponents)
+                                            forKey:KEY_TITLE_COMPONENTS];
     return modified;
 }
 

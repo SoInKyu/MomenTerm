@@ -134,6 +134,9 @@ import AppKit
         profile[KEY_USE_TAB_COLOR] = NSNumber(value: true)
         profile[KEY_TAB_COLOR] = ITAddressBookMgr.encode(colorForSpaceName(spaceName))
         profile[KEY_ALLOW_TITLE_SETTING] = NSNumber(value: false)
+        // Tab title: project (session) name + live job in parens.
+        // Bitmask = iTermTitleComponentsSessionName (1) | iTermTitleComponentsJob (2).
+        profile[KEY_TITLE_COMPONENTS] = NSNumber(value: 3)
         if !projectName.isEmpty {
             profile[KEY_NAME] = projectName
         }
@@ -167,12 +170,15 @@ import AppKit
     }
 
     private func colorForSpaceName(_ spaceName: String) -> NSColor {
+        // Match PseudoTerminal.m it_momentermColorForSpaceName: muted pastel
+        // (sat 0.32 / brt 0.78) so the tab tint reads as soft mint/lavender,
+        // not vivid magenta — same hash-to-hue mapping per space.
         if spaceName.isEmpty {
-            return NSColor(hue: 0.6, saturation: 0.45, brightness: 0.85, alpha: 1.0)
+            return NSColor(hue: 0.42, saturation: 0.32, brightness: 0.78, alpha: 1.0)
         }
         let h = (spaceName as NSString).hash
         let hue = CGFloat(h % 360) / 360.0
-        return NSColor(hue: hue, saturation: 0.45, brightness: 0.85, alpha: 1.0)
+        return NSColor(hue: hue, saturation: 0.32, brightness: 0.78, alpha: 1.0)
     }
 
     // MARK: - NSWindowDelegate
