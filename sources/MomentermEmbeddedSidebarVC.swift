@@ -12,13 +12,20 @@ import AppKit
 
 @objc protocol MomentermEmbeddedSidebarDelegate: AnyObject {
     /// Called when the user opens a project from the sidebar.
-    func sidebarDidRequestOpenProject(path: String, spaceName: String, projectName: String, inNewTab: Bool, aiCommand: String?)
+    /// `projectId` is the MomentermProject.id, used to register the newly-created
+    /// session with MomentermSessionRegistry so it can be found later by single-click.
+    func sidebarDidRequestOpenProject(path: String, spaceName: String, projectName: String, projectId: String, inNewTab: Bool, aiCommand: String?)
     /// Called when the user requests the file tree panel for a project.
     func sidebarDidRequestShowFileTree(path: String, projectName: String)
     /// Called when the user clicks a file inside an inline-expanded project
     /// tree. The host should load `filePath` into the right-side file editor
     /// panel (reusing the existing editor wiring used by the file-tree panel).
     func sidebarDidRequestOpenFile(filePath: String, projectPath: String, projectName: String)
+    /// Called by single-click. If a live session is registered for `projectId`, the host
+    /// must activate that window/tab/session and return true; if no live session exists,
+    /// return false so the sidebar can fall through to its default behavior (select-only).
+    @discardableResult
+    func sidebarDidRequestActivateExistingSession(projectId: String) -> Bool
 }
 
 // MARK: - WorkspaceCellView (hover "+" button)
@@ -95,6 +102,36 @@ private final class ProjectCellView: NSTableCellView {
     /// permanently next to the project name.
     private var actionStripAlwaysVisible = false
 
+    /// 4pt left-edge color bar shown for the project whose session is currently
+    /// active. Separate from NSOutlineView's selection highlight so the user can
+    /// see at a glance which project they're working on even when another row is
+    /// selected. nil = no bar (project is not active).
+    private var accentBar: NSView?
+
+    func setAccentBar(color: NSColor?) {
+        if let color = color {
+            if accentBar == nil {
+                let bar = NSView()
+                bar.wantsLayer = true
+                bar.layer?.cornerRadius = 1
+                accentBar = bar
+                addSubview(bar, positioned: .below, relativeTo: nil)
+            }
+            accentBar?.layer?.backgroundColor = color.cgColor
+            accentBar?.isHidden = false
+            needsLayout = true
+        } else {
+            accentBar?.isHidden = true
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        if let bar = accentBar, !bar.isHidden {
+            bar.frame = NSRect(x: 0, y: 2, width: 3, height: max(0, bounds.height - 4))
+        }
+    }
+
     func setActionStrip(_ strip: NSView?, alwaysVisible: Bool = false) {
         actionStrip?.removeFromSuperview()
         actionStrip = strip
@@ -138,6 +175,7 @@ private final class ProjectCellView: NSTableCellView {
         actionStrip?.removeFromSuperview()
         actionStrip = nil
         actionStripAlwaysVisible = false
+        accentBar?.isHidden = true
     }
 }
 
@@ -555,23 +593,88 @@ private struct DropTarget {
         dropOverlay?.isHidden = isEmpty
     }
 
-    /// Selects the sidebar row whose project path matches `path`.
-    /// Called from PseudoTerminal when the active tab changes.
+    /// MomentermProject.id of the project whose session is currently active in the
+    /// host terminal. Drives the left-edge accent bar on the matching row, so the
+    /// user can see at a glance which project they're working on — independent of
+    /// the transient row selection. `nil` = no project is active.
+    private var activeProjectId: String?
+
+    /// Selects the sidebar row whose project path matches `path` AND marks that
+    /// project as the "active" one (for the accent-bar highlight). Called from
+    /// PseudoTerminal whenever the key terminal session/tab/window changes.
     @objc func selectProjectForPath(_ path: String) {
-        guard !path.isEmpty, filteredItems == nil else { return }
+        guard !path.isEmpty else { return }
         let resolved = (path as NSString).resolvingSymlinksInPath
+        var matchedProjectId: String?
+        var matchedRow: Int = -1
         for row in 0..<outlineView.numberOfRows {
             guard let item = outlineView.item(atRow: row) as? SidebarItem,
                   case .project(let project, _) = item else { continue }
             let projResolved = (project.path as NSString).resolvingSymlinksInPath
             if projResolved == resolved {
-                outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
-                outlineView.scrollRowToVisible(row)
-                return
+                matchedProjectId = project.id
+                matchedRow = row
+                break
             }
         }
-        // No match — clear selection so stale highlight doesn't mislead
-        outlineView.selectRowIndexes(IndexSet(), byExtendingSelection: false)
+        updateActiveProject(id: matchedProjectId)
+        // Selection only updates when we're not in filter mode — otherwise the user
+        // would jump out of their search context every time they switch tabs.
+        if filteredItems == nil, matchedRow >= 0 {
+            outlineView.selectRowIndexes(IndexSet(integer: matchedRow), byExtendingSelection: false)
+            outlineView.scrollRowToVisible(matchedRow)
+        }
+    }
+
+    /// Same as `selectProjectForPath` but takes the project ID directly. Preferred
+    /// over the path-based path when the caller knows which project a session
+    /// belongs to via `MomentermSessionRegistry`.
+    @objc func setActiveProjectId(_ projectId: String?) {
+        updateActiveProject(id: projectId)
+        guard filteredItems == nil, let projectId = projectId, !projectId.isEmpty else { return }
+        for row in 0..<outlineView.numberOfRows {
+            guard let item = outlineView.item(atRow: row) as? SidebarItem,
+                  case .project(let project, _) = item, project.id == projectId else { continue }
+            outlineView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            outlineView.scrollRowToVisible(row)
+            return
+        }
+    }
+
+    /// Updates the accent bar on the visible project rows. We avoid reloadData
+    /// because that drops the file-tree expansion state — instead we walk visible
+    /// rows and re-apply the accent on each ProjectCellView, which is O(visible).
+    private func updateActiveProject(id newId: String?) {
+        let oldId = activeProjectId
+        guard oldId != newId else { return }
+        activeProjectId = newId
+        refreshAccentBars()
+    }
+
+    private func refreshAccentBars() {
+        let visibleRange = outlineView.rows(in: outlineView.visibleRect)
+        guard visibleRange.length > 0 else { return }
+        for row in visibleRange.location..<(visibleRange.location + visibleRange.length) {
+            guard let item = outlineView.item(atRow: row) as? SidebarItem,
+                  case .project(let project, let space) = item else { continue }
+            guard let cell = outlineView.view(atColumn: 0, row: row, makeIfNecessary: false) as? ProjectCellView else { continue }
+            if project.id == activeProjectId {
+                cell.setAccentBar(color: colorForSpaceName(space.name))
+            } else {
+                cell.setAccentBar(color: nil)
+            }
+        }
+    }
+
+    /// Unified accent color for the active-project bar. A muted khaki — calm enough
+    /// to live in the sidebar permanently without competing with the user's content,
+    /// distinctive enough to read at a glance against the system-default selection
+    /// highlight. We deliberately do NOT vary by space (the per-space tab color in
+    /// the terminal area already provides that signal); a single soft tone keeps
+    /// the sidebar visually quiet.
+    private func colorForSpaceName(_ spaceName: String) -> NSColor {
+        _ = spaceName
+        return NSColor(red: 0.52, green: 0.48, blue: 0.30, alpha: 0.80)
     }
 
     private func applyFilter(query: String) {
@@ -629,6 +732,23 @@ private struct DropTarget {
     @objc private func sidebarRowClicked() {
         let row = outlineView.clickedRow
         guard row >= 0 else { return }
+
+        // Project row: single click activates an already-open tab/window for this
+        // project (if any). If no live session matches, fall through to the default
+        // NSOutlineView selection behavior — the user can still double-click to open
+        // a new tab/window. This is the "한 번 클릭 = 기존 작업으로 이동" half of the
+        // single/double-click split.
+        let sidebarItem: SidebarItem?
+        if let filtered = filteredItems {
+            sidebarItem = (row < filtered.count) ? filtered[row] : nil
+        } else {
+            sidebarItem = outlineView.item(atRow: row) as? SidebarItem
+        }
+        if let sidebarItem, case .project(let project, _) = sidebarItem {
+            _ = sidebarDelegate?.sidebarDidRequestActivateExistingSession(projectId: project.id)
+            return
+        }
+
         guard let item = outlineView.item(atRow: row) else { return }
         guard let node = item as? MtFileNode else { return }
         if node.isDirectory {
@@ -672,8 +792,17 @@ private struct DropTarget {
             sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
                                                          spaceName: space.name,
                                                          projectName: project.name,
+                                                         projectId: project.id,
                                                          inNewTab: false,
                                                          aiCommand: nil)
+            return
+        }
+
+        // If a tab/window is already open for this project, jump straight to it
+        // instead of prompting "새 탭 / 새 창". The dialog is reserved for the
+        // explicit "open another instance" case. (Matches the single-click rule:
+        // existing work = navigate, new work = choose.)
+        if sidebarDelegate?.sidebarDidRequestActivateExistingSession(projectId: project.id) == true {
             return
         }
 
@@ -687,12 +816,14 @@ private struct DropTarget {
             sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
                                                          spaceName: space.name,
                                                          projectName: project.name,
+                                                         projectId: project.id,
                                                          inNewTab: true,
                                                          aiCommand: nil)
         } else if response == .alertSecondButtonReturn {
             sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
                                                          spaceName: space.name,
                                                          projectName: project.name,
+                                                         projectId: project.id,
                                                          inNewTab: false,
                                                          aiCommand: nil)
         }
@@ -1558,12 +1689,17 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
                 return makeCell(outlineView, text: space.name.uppercased(), symbol: "folder.fill",
                                 isHeader: true, accent: false, aiTool: nil,
                                 addProjectHandler: { [weak self] in self?.addProjectToSpaceCore(space) })
-            case .project(let project, _):
+            case .project(let project, let space):
                 let inlineExpanded = (expandedFileTrees[project.id] != nil)
-                return makeCell(outlineView, text: project.name, symbol: "chevron.left.slash.chevron.right",
-                                isHeader: false, accent: !project.pathExists,
-                                aiTool: project.aiTool, localBackend: project.localLLMBackend,
-                                inlineExpanded: inlineExpanded)
+                let cell = makeCell(outlineView, text: project.name, symbol: "chevron.left.slash.chevron.right",
+                                    isHeader: false, accent: !project.pathExists,
+                                    aiTool: project.aiTool, localBackend: project.localLLMBackend,
+                                    inlineExpanded: inlineExpanded)
+                if let projectCell = cell as? ProjectCellView {
+                    let isActive = (project.id == activeProjectId)
+                    projectCell.setAccentBar(color: isActive ? colorForSpaceName(space.name) : nil)
+                }
+                return cell
             }
         }
         if let node = item as? MtFileNode {
@@ -1839,6 +1975,7 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
             path: project.path,
             spaceName: space.name,
             projectName: project.name,
+            projectId: project.id,
             inNewTab: true,
             aiCommand: project.aiLaunchCommand
         )
@@ -1962,6 +2099,26 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
             fileTree.representedObject = project
             fileTree.target = self
             menu.addItem(fileTree)
+
+            // "최근 명령어" submenu — appears only when MomentermProjectRestorer has
+            // captured a previous session's shell history for this project. The
+            // user can pick a command to copy it to the clipboard.
+            if !project.lastCommands.isEmpty {
+                let recent = NSMenuItem(title: "최근 명령어", action: nil, keyEquivalent: "")
+                let submenu = NSMenu(title: "최근 명령어")
+                // newest first — most useful at the top of a glance
+                for cmd in project.lastCommands.reversed() {
+                    let item = NSMenuItem(title: cmd,
+                                          action: #selector(copyRecentCommand(_:)),
+                                          keyEquivalent: "")
+                    item.representedObject = cmd
+                    item.target = self
+                    item.toolTip = "선택하면 클립보드에 복사됩니다"
+                    submenu.addItem(item)
+                }
+                recent.submenu = submenu
+                menu.addItem(recent)
+            }
 
             // "새 파일… / 새 폴더…" — show only when this project's inline
             // tree is actually expanded. A closed project row would otherwise
@@ -2233,6 +2390,13 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         }
         MomentermProjectStorage.shared.save(s)
         reloadData()
+    }
+
+    @objc private func copyRecentCommand(_ sender: NSMenuItem) {
+        guard let cmd = sender.representedObject as? String, !cmd.isEmpty else { return }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(cmd, forType: .string)
     }
 
     @objc private func editProject(_ sender: NSMenuItem) {

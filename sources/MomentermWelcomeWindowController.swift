@@ -90,26 +90,35 @@ import AppKit
     func sidebarDidRequestOpenProject(path: String,
                                       spaceName: String,
                                       projectName: String,
+                                      projectId: String,
                                       inNewTab: Bool,
                                       aiCommand: String?) {
         launchProjectTerminal(path: path,
                               spaceName: spaceName,
                               projectName: projectName,
+                              projectId: projectId,
                               aiCommand: aiCommand)
+    }
+
+    func sidebarDidRequestActivateExistingSession(projectId: String) -> Bool {
+        // Welcome window has no live terminal sessions yet.
+        return false
     }
 
     func sidebarDidRequestShowFileTree(path: String, projectName: String) {
         // Welcome state has no host terminal — treat as plain project open.
+        let pid = MomentermProjectStorage.shared.load().findProject(atPath: path)?.id ?? ""
         launchProjectTerminal(path: path, spaceName: "",
-                              projectName: projectName, aiCommand: nil)
+                              projectName: projectName, projectId: pid, aiCommand: nil)
     }
 
     func sidebarDidRequestOpenFile(filePath: String,
                                    projectPath: String,
                                    projectName: String) {
         // Same: convert any sub-action into a project-open in a new window.
+        let pid = MomentermProjectStorage.shared.load().findProject(atPath: projectPath)?.id ?? ""
         launchProjectTerminal(path: projectPath, spaceName: "",
-                              projectName: projectName, aiCommand: nil)
+                              projectName: projectName, projectId: pid, aiCommand: nil)
     }
 
     // MARK: - Launch real terminal in project directory
@@ -117,6 +126,7 @@ import AppKit
     private func launchProjectTerminal(path: String,
                                        spaceName: String,
                                        projectName: String,
+                                       projectId: String,
                                        aiCommand: String?) {
         var profile: [AnyHashable: Any] = iTermController.sharedInstance().defaultBookmark() ?? [:]
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
@@ -148,6 +158,9 @@ import AppKit
             if let frame = targetFrame,
                let newWindow = session.delegate?.realParentWindow()?.window {
                 newWindow.setFrame(frame, display: false, animate: false)
+            }
+            if !projectId.isEmpty, let guid = session.guid {
+                MomentermSessionRegistry.shared.register(sessionGuid: guid, projectId: projectId)
             }
             self?.close()
         }

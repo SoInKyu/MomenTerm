@@ -22,6 +22,7 @@
 		10D567B3DD4E3FB05673BF65 /* iTermAnnotatedScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C74C12959E7040AF3A3B12F /* iTermAnnotatedScreenshot.swift */; };
 		13DE2BC708456198F83264EC /* Underline.metal in Sources */ = {isa = PBXBuildFile; fileRef = F287FABDFD3BECB9DCD3181D /* Underline.metal */; };
 		144DC651FBD55CD3407DB29C /* decdwl_decdhl_normalized.txt in Resources */ = {isa = PBXBuildFile; fileRef = 148411BF36E0AD043E6CA1CD /* decdwl_decdhl_normalized.txt */; };
+		17A0546EB4A462E2840ABB44 /* MomentermSessionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0AB973E5C09DBEB81A0AA1C /* MomentermSessionRegistry.swift */; };
 		1D027C111CD1867000B0FBFF /* iTermColorPresets.h in Headers */ = {isa = PBXBuildFile; fileRef = 1D027C0F1CD1867000B0FBFF /* iTermColorPresets.h */; };
 		1D0318281A42563A00932107 /* iTermImageWell.h in Headers */ = {isa = PBXBuildFile; fileRef = 1D0318261A42563A00932107 /* iTermImageWell.h */; };
 		1D0318291A42563A00932107 /* iTermImageWell.h in Headers */ = {isa = PBXBuildFile; fileRef = 1D0318261A42563A00932107 /* iTermImageWell.h */; };
@@ -986,6 +987,7 @@
 		8A1D05C2395895AB87D24E4C /* MomentermPluginMarketWindowController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82EB3E48E8A6A7123CC77582 /* MomentermPluginMarketWindowController.swift */; };
 		8A453AE5518351B65142AF55 /* MomentermCCStatusBarComponentImpl.h in Sources */ = {isa = PBXBuildFile; fileRef = 530609D772AB0369899499DC /* MomentermCCStatusBarComponentImpl.h */; };
 		8C6191C977F35C7D2E816452 /* MomentermPluginRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 150D1EC4510FB67652E1DBF6 /* MomentermPluginRegistry.swift */; };
+		8D74189C5AE4352C5BE6FDEE /* MomentermProjectRestorer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F806287655F9A99FF805BFD /* MomentermProjectRestorer.swift */; };
 		8E87A30F7C195E310321C9D9 /* iTermCharacterSourceTestHelper.m in Sources */ = {isa = PBXBuildFile; fileRef = 646F4870D9C453064E2DEA8F /* iTermCharacterSourceTestHelper.m */; };
 		8E9796208C12DD69744D3606 /* iTermLocatedString+ScreenCharArray.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81E145AE29B68F8F2A69891A /* iTermLocatedString+ScreenCharArray.swift */; };
 		8EA9D682DE4199E114D920A5 /* iTermStreamingScreenshotEncoder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B9A9D7BB06953CE9297F1FC /* iTermStreamingScreenshotEncoder.swift */; };
@@ -6069,6 +6071,7 @@
 		2A6C888C5EE5D78B8867714C /* MomentermFileTreeHeaderActions.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermFileTreeHeaderActions.swift; sourceTree = "<group>"; };
 		2AEB275FE345E8480B41FAEF /* iTermImageComparison.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = iTermImageComparison.m; sourceTree = "<group>"; };
 		2B9A9D7BB06953CE9297F1FC /* iTermStreamingScreenshotEncoder.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermStreamingScreenshotEncoder.swift; sourceTree = "<group>"; };
+		2F806287655F9A99FF805BFD /* MomentermProjectRestorer.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermProjectRestorer.swift; sourceTree = "<group>"; };
 		3335AD96138BA74CC79D25A8 /* iTermUnicodeNormalization.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = iTermUnicodeNormalization.h; sourceTree = "<group>"; };
 		39A91EF453B797BB100AD508 /* SessionNoteModel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionNoteModel.swift; sourceTree = "<group>"; };
 		40D246CFCEDD7927D320BF51 /* MovePaneController+API.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = "MovePaneController+API.swift"; sourceTree = "<group>"; };
@@ -9319,6 +9322,7 @@
 		CA1C7B91071000DE37B9DA33 /* iTermSessionTabStatus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermSessionTabStatus.swift; sourceTree = "<group>"; };
 		CA34A6F29B10471D8FD572F6 /* GlobalJobMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlobalJobMonitor.swift; sourceTree = "<group>"; };
 		CB2F48F836C5732146BCEDD9 /* iTermStreamingPNGWriter.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = iTermStreamingPNGWriter.h; sourceTree = "<group>"; };
+		D0AB973E5C09DBEB81A0AA1C /* MomentermSessionRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermSessionRegistry.swift; sourceTree = "<group>"; };
 		D3CE2D4C1A00936F0098ED99 /* PSMDarkTabStyle.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PSMDarkTabStyle.h; sourceTree = "<group>"; };
 		D3CE2D4D1A00936F0098ED99 /* PSMDarkTabStyle.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PSMDarkTabStyle.m; sourceTree = "<group>"; };
 		D67F2D7DFE211B54DF8F180F /* MomentermGitGraphCellView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermGitGraphCellView.swift; sourceTree = "<group>"; };
@@ -9753,6 +9757,8 @@
 				2A6C888C5EE5D78B8867714C /* MomentermFileTreeHeaderActions.swift */,
 				5A96DF47553BD99532CC7CB4 /* MomentermWelcomeView.swift */,
 				116668636D87170D14837676 /* MomentermWelcomeWindowController.swift */,
+				D0AB973E5C09DBEB81A0AA1C /* MomentermSessionRegistry.swift */,
+				2F806287655F9A99FF805BFD /* MomentermProjectRestorer.swift */,
 			);
 			name = Classes;
 			path = sources/;
@@ -20489,6 +20495,8 @@
 				5D641EFF8531A625174801B7 /* MomentermFileTreeHeaderActions.swift in Sources */,
 				BD04640ABED4FDE0CAA9C809 /* MomentermWelcomeView.swift in Sources */,
 				9F09921623C058289BC9C9B9 /* MomentermWelcomeWindowController.swift in Sources */,
+				17A0546EB4A462E2840ABB44 /* MomentermSessionRegistry.swift in Sources */,
+				8D74189C5AE4352C5BE6FDEE /* MomentermProjectRestorer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

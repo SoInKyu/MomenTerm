@@ -1038,6 +1038,10 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification {
     DLog(@"applicationWillTerminate called");
+    // Snapshot the live project sessions BEFORE the controller is torn down — once
+    // allSessions disappears we lose the ability to read working directory, foreground
+    // job, and command history for each session.
+    [[MomentermProjectRestorer shared] captureAllOnQuit];
     [iTermController releaseSharedInstance];
     [[iTermModifierRemapper sharedInstance] setRemapModifiers:NO];
     DLog(@"applicationWillTerminate returning");
@@ -1565,6 +1569,22 @@ void TurnOnDebugLoggingAutomatically(void) {
 
     // MomenTerm: register defaults (must run before any keyboard input)
     [[iTermUserDefaults userDefaults] registerDefaults:@{@"MomentermSingleEnterCommitsIME": @YES}];
+
+    // MomenTerm: install the session lifecycle observers (incremental capture +
+    // auto-registration of pre-existing sessions). MUST happen before the user has
+    // a chance to close any tab — otherwise iTermSessionWillTerminate fires with no
+    // listener and we lose the capture opportunity.
+    [MomentermProjectRestorer bootstrap];
+
+    // MomenTerm: restore the last set of open projects after iTerm2's own state
+    // restoration has had a chance to run. Dispatched async + delayed so any
+    // PseudoTerminalRestorer pass finishes before we start opening new tabs (and so
+    // MomentermSessionRegistry has had a chance to auto-register revived sessions
+    // against their working directories — preventing duplicate restoration).
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [[MomentermProjectRestorer shared] restoreIfNeeded];
+    });
 
     // MomenTerm: add project manager + plugin marketplace + browser entries to the Window menu
     NSMenu *windowsMenu = [NSApp windowsMenu];

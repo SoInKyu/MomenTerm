@@ -79,6 +79,14 @@ struct MomentermProject: Codable, Identifiable {
     var localLLMBackend: MomentermLocalLLMBackend?
     var localLLMModel: String?
 
+    // Snapshot of the project's last live state. Used by MomentermProjectRestorer to bring
+    // back the same working environment after an app relaunch.
+    var lastWorkingDirectory: String?
+    var lastAITool: MomentermAITool?
+    var lastCommands: [String]
+    var lastFocusedAt: Date?
+    var wasOpenAtTermination: Bool
+
     init(name: String, path: String, aiTool: MomentermAITool = .claudeCode, tmuxMode: MomentermTmuxMode = .disabled) {
         self.id = UUID().uuidString
         self.name = name
@@ -86,6 +94,34 @@ struct MomentermProject: Codable, Identifiable {
         self.aiTool = aiTool
         self.tmuxMode = tmuxMode
         self.createdAt = Date()
+        self.lastCommands = []
+        self.wasOpenAtTermination = false
+    }
+
+    // Backward-compatible decode: older projects.json files won't have the snapshot fields.
+    enum CodingKeys: String, CodingKey {
+        case id, name, path, aiTool, tmuxMode, tmuxSession, createdAt, lastOpenedAt
+        case localLLMBackend, localLLMModel
+        case lastWorkingDirectory, lastAITool, lastCommands, lastFocusedAt, wasOpenAtTermination
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(String.self, forKey: .id)
+        self.name = try c.decode(String.self, forKey: .name)
+        self.path = try c.decode(String.self, forKey: .path)
+        self.aiTool = try c.decode(MomentermAITool.self, forKey: .aiTool)
+        self.tmuxMode = try c.decode(MomentermTmuxMode.self, forKey: .tmuxMode)
+        self.tmuxSession = try c.decodeIfPresent(String.self, forKey: .tmuxSession)
+        self.createdAt = try c.decode(Date.self, forKey: .createdAt)
+        self.lastOpenedAt = try c.decodeIfPresent(Date.self, forKey: .lastOpenedAt)
+        self.localLLMBackend = try c.decodeIfPresent(MomentermLocalLLMBackend.self, forKey: .localLLMBackend)
+        self.localLLMModel = try c.decodeIfPresent(String.self, forKey: .localLLMModel)
+        self.lastWorkingDirectory = try c.decodeIfPresent(String.self, forKey: .lastWorkingDirectory)
+        self.lastAITool = try c.decodeIfPresent(MomentermAITool.self, forKey: .lastAITool)
+        self.lastCommands = try c.decodeIfPresent([String].self, forKey: .lastCommands) ?? []
+        self.lastFocusedAt = try c.decodeIfPresent(Date.self, forKey: .lastFocusedAt)
+        self.wasOpenAtTermination = try c.decodeIfPresent(Bool.self, forKey: .wasOpenAtTermination) ?? false
     }
 
     /// Command to start the configured AI tool. Project-aware so localLLM can reference its backend/model.

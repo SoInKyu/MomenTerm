@@ -1617,6 +1617,7 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 - (void)sidebarDidRequestOpenProjectWithPath:(NSString *)path
                                    spaceName:(NSString *)spaceName
                                  projectName:(NSString *)projectName
+                                   projectId:(NSString *)projectId
                                     inNewTab:(BOOL)inNewTab
                                    aiCommand:(nullable NSString *)aiCommand {
     Profile *profile = [self it_momentermProfileForPath:path spaceName:spaceName];
@@ -1628,20 +1629,88 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     if (aiCommand.length > 0) {
         profile = [profile dictionaryBySettingObject:aiCommand forKey:KEY_INITIAL_TEXT];
     }
+    __weak typeof(self) weakSelf = self;
+    void (^registerSession)(PTYSession *) = ^(PTYSession *session) {
+        if (session && projectId.length > 0 && session.guid.length > 0) {
+            [[MomentermSessionRegistry shared] registerWithSessionGuid:session.guid
+                                                              projectId:projectId];
+            // Now that the registry knows about this session, refresh the highlight
+            // so the user sees the newly-opened project marked as active right away.
+            [weakSelf it_syncMomentermSidebarToActiveSession];
+        }
+    };
     if (inNewTab) {
-        [self createTabWithProfile:profile
-                       withCommand:nil
-                       environment:nil
-                          tabIndex:nil
-                 previousDirectory:path
-                            parent:nil
-                        completion:nil];
+        PTYSession *newSession = [self createTabWithProfile:profile
+                                                withCommand:nil
+                                                environment:nil
+                                                   tabIndex:nil
+                                          previousDirectory:path
+                                                     parent:nil
+                                                 completion:nil];
+        registerSession(newSession);
     } else {
         [iTermSessionLauncher launchBookmark:profile
                                   inTerminal:nil
                           respectTabbingMode:NO
-                                  completion:nil];
+                                  completion:^(PTYSession * _Nullable session) {
+            registerSession(session);
+        }];
     }
+}
+
+// Drives the sidebar's "active project" highlight. Prefers the in-memory session
+// ↔ project registry (set up when the user opened the project via the sidebar);
+// falls back to matching the active session's profile working directory against
+// the project list. Called from tab-change, window-key-change, and after a new
+// project session is registered.
+- (void)it_syncMomentermSidebarToActiveSession {
+    if (!_momentermSidebarVC) {
+        return;
+    }
+    PTYSession *session = [self currentSession];
+    if (session.guid.length > 0) {
+        NSString *pid = [[MomentermSessionRegistry shared] projectIdForSessionGuid:session.guid];
+        if (pid.length > 0) {
+            [_momentermSidebarVC setActiveProjectId:pid];
+            [[MomentermSessionRegistry shared] touchWithSessionGuid:session.guid];
+            return;
+        }
+    }
+    NSString *tabDir = session.profile[KEY_WORKING_DIRECTORY];
+    if (tabDir.length > 0) {
+        [_momentermSidebarVC selectProjectForPath:tabDir];
+    } else {
+        [_momentermSidebarVC setActiveProjectId:nil];
+    }
+}
+
+// MARK: Single-click → activate existing live session for the project
+
+- (BOOL)sidebarDidRequestActivateExistingSessionWithProjectId:(NSString *)projectId {
+    if (projectId.length == 0) {
+        return NO;
+    }
+    NSString *guid = [[MomentermSessionRegistry shared] latestSessionGuidForProjectId:projectId];
+    if (guid.length == 0) {
+        return NO;
+    }
+    // Verify the session is actually live; clean up stale registry entry if not.
+    BOOL alive = NO;
+    for (PTYSession *s in [[iTermController sharedInstance] allSessions]) {
+        if ([s.guid isEqualToString:guid]) {
+            alive = YES;
+            break;
+        }
+    }
+    if (!alive) {
+        [[MomentermSessionRegistry shared] unregisterWithSessionGuid:guid];
+        return NO;
+    }
+    // revealSessionWithGUID: handles window key+order-front (which causes macOS to
+    // switch Spaces to follow the window), tab selection, and session focus.
+    [[iTermController sharedInstance] revealSessionWithGUID:guid];
+    [[MomentermSessionRegistry shared] touchWithSessionGuid:guid];
+    return YES;
 }
 
 - (void)sidebarDidRequestShowFileTreeWithPath:(NSString *)path
@@ -5144,6 +5213,10 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     [[iTermDockBadgeController sharedInstance] resetBellCount];
 
     [[iTermController sharedInstance] setCurrentTerminal:self];
+    // When the user switches focus to a different terminal window, make the sidebar
+    // accent bar follow the active project rather than getting stuck on whatever
+    // was active in the previously-key window.
+    [self it_syncMomentermSidebarToActiveSession];
     iTermApplicationDelegate *itad = [iTermApplication.sharedApplication delegate];
     [itad updateMaximizePaneMenuItem];
     [itad updateUseTransparencyMenuItem];
@@ -7509,11 +7582,8 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
     [_contentView setCurrentSessionAlpha:self.currentSession.textview.transparencyAlpha];
     [tab didSelectTab];
     [[NSNotificationCenter defaultCenter] postNotificationName:iTermSelectedTabDidChange object:tab];
-    // Sync sidebar selection to the newly-active tab's project directory.
-    NSString *tabDir = tab.activeSession.profile[KEY_WORKING_DIRECTORY];
-    if (tabDir.length > 0) {
-        [_momentermSidebarVC selectProjectForPath:tabDir];
-    }
+    // Sync sidebar selection + accent highlight to the newly-active session.
+    [self it_syncMomentermSidebarToActiveSession];
     // Refresh the bottom git-graph against the active session's live cwd.
     [self it_updateMomentermGitGraphCwd];
     DLog(@"Finished");
