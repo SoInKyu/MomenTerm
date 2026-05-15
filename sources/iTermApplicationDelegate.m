@@ -130,6 +130,7 @@
 #import "iTermUserDefaults.h"
 #import "iTermWarning.h"
 #import "iTermWebSocketCookieJar.h"
+#import <CoreText/CoreText.h>
 #import <Quartz/Quartz.h>
 #import <objc/runtime.h>
 
@@ -1437,6 +1438,22 @@ void TurnOnDebugLoggingAutomatically(void) {
                                     window:nil];
     }
     DLog(@"didFinishLaunching");
+
+    // Register fonts bundled in .app/Contents/Resources/ for in-process use
+    // so glyphs (e.g. Powerline / Nerd Font icons) render in fresh installs
+    // without the legacy NerdFontInstaller download dialog. Users can still
+    // promote to system-wide (~/Library/Fonts/) via the Welcome card button.
+    NSURL *symbolsNFURL = [[NSBundle mainBundle] URLForResource:@"SymbolsNerdFont-Regular" withExtension:@"ttf"];
+    if (symbolsNFURL) {
+        CFErrorRef regError = NULL;
+        if (!CTFontManagerRegisterFontsForURL((CFURLRef)symbolsNFURL, kCTFontManagerScopeProcess, &regError)) {
+            long code = regError ? (long)CFErrorGetCode(regError) : 0;
+            DLog(@"Failed to register bundled SymbolsNF (code=%ld)", code);
+            if (regError) { CFRelease(regError); }
+        }
+    } else {
+        DLog(@"Bundled SymbolsNF not found in main bundle");
+    }
 
     [iTermLaunchExperienceController applicationDidFinishLaunching];
     [[iTermLaunchServices sharedInstance] registerForiTerm2Scheme];

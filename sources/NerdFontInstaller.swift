@@ -276,6 +276,64 @@ class NerdFontInstaller {
             return false
         }
     }
+
+    // Promote the .app-bundled SymbolsNF font to system-wide (.persistent)
+    // scope by copying it into ~/Library/Fonts/ and registering with the
+    // font manager. Used by the Welcome card so users can opt into
+    // "show this font in other apps too" without re-downloading anything.
+    // Skips the legacy network/unzip path entirely.
+    static func installBundledFontsToSystem(window: NSWindow?,
+                                            completion: @escaping (NerdFontInstallerError?) -> ()) {
+        guard let bundledURL = Bundle.main.url(forResource: "SymbolsNerdFont-Regular",
+                                               withExtension: "ttf") else {
+            DispatchQueue.main.async { completion(.missingRequiredFonts) }
+            return
+        }
+        let fileManager = FileManager.default
+        let fontsDir = Self.fontsDirectory
+        let destURL = fontsDir.appendingPathComponent(bundledURL.lastPathComponent)
+        do {
+            try fileManager.createDirectory(at: fontsDir, withIntermediateDirectories: true)
+            if fileManager.fileExists(atPath: destURL.path) {
+                CTFontManagerUnregisterFontsForURL(destURL as CFURL, .persistent, nil)
+                try fileManager.removeItem(at: destURL)
+            }
+            try fileManager.copyItem(at: bundledURL, to: destURL)
+        } catch {
+            DispatchQueue.main.async {
+                completion(.fontInstallationFailed(reason: error.localizedDescription))
+            }
+            return
+        }
+        guard let descriptorsCF = CTFontManagerCreateFontDescriptorsFromURL(destURL as CFURL) else {
+            DispatchQueue.main.async { completion(.missingRequiredFonts) }
+            return
+        }
+        let descriptors = Array<CTFontDescriptor>(descriptorsCF)
+        if descriptors.isEmpty {
+            DispatchQueue.main.async { completion(.missingRequiredFonts) }
+            return
+        }
+        CTFontManagerRegisterFontDescriptors(descriptors.cfArray,
+                                             .persistent,
+                                             true) { errors, done in
+            let fatal = Array<CFError>(errors).filter {
+                CFErrorGetCode($0) != CTFontManagerError.alreadyRegistered.rawValue
+            }
+            if fatal.isEmpty {
+                if done {
+                    DispatchQueue.main.async { completion(nil) }
+                }
+                return true
+            }
+            let reason = fatal.compactMap { CFErrorCopyDescription($0) as String? }
+                .joined(separator: ", ")
+            DispatchQueue.main.async {
+                completion(.fontInstallationFailed(reason: reason.isEmpty ? "Unknown error" : reason))
+            }
+            return false
+        }
+    }
 }
 
 extension Array {
