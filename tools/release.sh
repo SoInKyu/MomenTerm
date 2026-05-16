@@ -137,15 +137,30 @@ fi
 # if they don't match release-iTerm2.plist. Catches "wrong plist got copied
 # in" and "someone rotated SUPublicEDKey in one place but not the other".
 # Keep EXPECT_KEY synced with plists/release-iTerm2.plist:398-399.
+# Auto-install keys (autocheck/interval/autoupdate) must also be present so
+# friends on v0.9.2+ get background updates without a dialog.
 echo "[release] verifying Info.plist sparkle keys..."
 EXPECT_KEY="zhZBg6HvG2DqeH4pTnwqnC+0Ti4euC4tvDqawrn43pw="
 EXPECT_FEED="https://github.com/$REPO_SLUG/releases/latest/download/appcast.xml"
+EXPECT_AUTOCHECK="true"
+EXPECT_INTERVAL="3600"
+EXPECT_AUTOUPDATE="true"
 GOT_KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
 GOT_FEED="$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
-if [ "$GOT_KEY" != "$EXPECT_KEY" ] || [ "$GOT_FEED" != "$EXPECT_FEED" ]; then
+GOT_AUTOCHECK="$(/usr/libexec/PlistBuddy -c "Print :SUEnableAutomaticChecks" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+GOT_INTERVAL="$(/usr/libexec/PlistBuddy -c "Print :SUScheduledCheckInterval" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+GOT_AUTOUPDATE="$(/usr/libexec/PlistBuddy -c "Print :SUAutomaticallyUpdate" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$GOT_KEY" != "$EXPECT_KEY" ] \
+   || [ "$GOT_FEED" != "$EXPECT_FEED" ] \
+   || [ "$GOT_AUTOCHECK" != "$EXPECT_AUTOCHECK" ] \
+   || [ "$GOT_INTERVAL" != "$EXPECT_INTERVAL" ] \
+   || [ "$GOT_AUTOUPDATE" != "$EXPECT_AUTOUPDATE" ]; then
   echo "error: Info.plist sparkle keys mismatch — aborting before zip/publish." >&2
-  echo "  SUPublicEDKey:  got='$GOT_KEY'  expected='$EXPECT_KEY'" >&2
-  echo "  SUFeedURL:      got='$GOT_FEED' expected='$EXPECT_FEED'" >&2
+  echo "  SUPublicEDKey:              got='$GOT_KEY'         expected='$EXPECT_KEY'" >&2
+  echo "  SUFeedURL:                  got='$GOT_FEED'        expected='$EXPECT_FEED'" >&2
+  echo "  SUEnableAutomaticChecks:    got='$GOT_AUTOCHECK'   expected='$EXPECT_AUTOCHECK'" >&2
+  echo "  SUScheduledCheckInterval:   got='$GOT_INTERVAL'    expected='$EXPECT_INTERVAL'" >&2
+  echo "  SUAutomaticallyUpdate:      got='$GOT_AUTOUPDATE'  expected='$EXPECT_AUTOUPDATE'" >&2
   exit 1
 fi
 
