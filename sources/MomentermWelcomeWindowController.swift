@@ -170,15 +170,10 @@ import AppKit
     }
 
     private func colorForSpaceName(_ spaceName: String) -> NSColor {
-        // Match PseudoTerminal.m it_momentermColorForSpaceName: muted pastel
-        // (sat 0.32 / brt 0.78) so the tab tint reads as soft mint/lavender,
-        // not vivid magenta — same hash-to-hue mapping per space.
-        if spaceName.isEmpty {
-            return NSColor(hue: 0.42, saturation: 0.32, brightness: 0.78, alpha: 1.0)
-        }
-        let h = (spaceName as NSString).hash
-        let hue = CGFloat(h % 360) / 360.0
-        return NSColor(hue: hue, saturation: 0.32, brightness: 0.78, alpha: 1.0)
+        // Mirrors PseudoTerminal.m it_momentermColorForSpaceName: — single
+        // bright fluorescent green for every active tab. The spaceName arg is
+        // kept for call-site stability but no longer drives the colour.
+        return NSColor(hue: 0.33, saturation: 0.60, brightness: 0.95, alpha: 1.0)
     }
 
     // MARK: - NSWindowDelegate

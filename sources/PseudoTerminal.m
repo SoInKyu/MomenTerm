@@ -1585,13 +1585,12 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [self it_refitAllSessionsAfterMomentermLayoutChange];
 }
 
-// Returns a stable muted color derived from the space name. Saturation/brightness
-// are tuned low so the tab tint sits in the soft pastel zone (mint, lavender,
-// dusty rose…) instead of vivid magenta/cyan, matching MomenTerm's reference look.
+// Returns the bright fluorescent green used to tint every MomenTerm tab.
+// Per-space hue hashing was removed — all active tabs now share one colour;
+// project differentiation comes from the tab label ("<project> (job)") and
+// from the active-vs-inactive selection state.
 - (NSColor *)it_momentermColorForSpaceName:(NSString *)spaceName {
-    NSUInteger h = [spaceName hash];
-    CGFloat hue = (CGFloat)(h % 360) / 360.0;
-    return [NSColor colorWithHue:hue saturation:0.32 brightness:0.78 alpha:1.0];
+    return [NSColor colorWithHue:0.33 saturation:0.60 brightness:0.95 alpha:1.0];
 }
 
 // Returns a modified copy of the current session's profile (or defaultBookmark) that:

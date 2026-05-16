@@ -779,8 +779,10 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         DLog("Computing effective background color for tab with color \(String(describing: tabColor)) selected=\(selected) highlight=\(highlightAmount)")
         let base = backgroundColorSelected(selected, highlightAmount: highlightAmount).it_srgbForColor(in: window)
         DLog("base=\(base)")
-        
-        if let tabColor = tabColor {
+
+        // MomenTerm: inactive tabs ignore tabColor so text-contrast math sees
+        // the same plain gray that the paint path produces.
+        if let tabColor = tabColor, selected {
             let cellbg = cellBackgroundColor(forTabColor: tabColor, selected: selected)
             DLog("cellbg=\(cellbg)")
             let overcoat = cellbg.it_srgbForColor(in: window)
@@ -822,7 +824,9 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
             drawCellOutline(path: path, rect: rect, radius: radius)
         }
 
-        if let tabColor {
+        // MomenTerm: only the selected tab is tinted; unselected tabs skip the
+        // tabColor block entirely and keep the default Tahoe gray background.
+        if let tabColor, selected {
             let color = cellBackgroundColor(forTabColor: tabColor, selected: true)
             color.set()
             if selected {
@@ -1032,7 +1036,10 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         }
 
         let mainAndActive = windowIsMainAndAppIsActive
-        let cellBackgroundColor: NSColor? = if let tabColor = cell.tabColor {
+        // MomenTerm: text-colour decisions on inactive tabs should treat the
+        // background as the plain gray they actually render with, not the
+        // tinted colour they would have had if active.
+        let cellBackgroundColor: NSColor? = if let tabColor = cell.tabColor, selected {
             cellBackgroundColor(forTabColor: tabColor, selected: selected)
         } else {
             nil

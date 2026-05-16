@@ -676,7 +676,9 @@
     DLog(@"Computing effective background color for tab with color %@ selected=%@ highlight=%@", tabColor, @(selected), @(highlightAmount));
     NSColor *base = [[self backgroundColorSelected:selected highlightAmount:highlightAmount] it_srgbForColorInWindow:window];
     DLog(@"base=%@", base);
-    if (tabColor) {
+    // MomenTerm: only the selected tab takes its tabColor; inactive tabs report
+    // the bare base colour so text contrast lines up with the gray paint path.
+    if (tabColor && selected) {
         NSColor *cellbg = [self cellBackgroundColorForTabColor:tabColor selected:selected];
         DLog(@"cellbg=%@", cellbg);
         NSColor *overcoat = [cellbg it_srgbForColorInWindow:window];
@@ -727,9 +729,10 @@
     }
     NSRectFill(backgroundRect);
 
-    if (tabColor) {
+    // MomenTerm: paint the tabColor only for the selected tab. Inactive tabs
+    // fall through to the default no-color path so they render as plain gray.
+    if (tabColor && selected) {
         NSColor *color = [self cellBackgroundColorForTabColor:tabColor selected:selected];
-        // Alpha the inactive tab's colors a bit to make it clear which tab is active.
         [color set];
         NSRectFillUsingOperation(cellFrame, NSCompositingOperationSourceOver);
     }
