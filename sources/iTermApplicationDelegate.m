@@ -3035,7 +3035,7 @@ static iTermKeyEventReplayer *gReplayer;
 }
 
 - (IBAction)showHelp:(id)sender {
-    [[NSWorkspace sharedWorkspace] it_openURL:[NSURL URLWithString:@"https://www.iterm2.com/documentation.html"]
+    [[NSWorkspace sharedWorkspace] it_openURL:[NSURL URLWithString:@"https://github.com/SoInKyu/MomenTerm"]
                                        target:nil
                                         style:iTermOpenStyleTab
                                        window:nil];

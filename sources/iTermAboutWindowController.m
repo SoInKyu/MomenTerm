@@ -201,13 +201,13 @@ static const CGFloat kSponsorRowY = 170.0;
                                                      title:@"What’s New in 3.6?\n"];
         }
 
-        NSAttributedString *webAString = [self attributedStringWithLinkToURL:@"https://iterm2.com/"
+        NSAttributedString *webAString = [self attributedStringWithLinkToURL:@"https://github.com/SoInKyu/MomenTerm"
                                                                        title:@"Home Page"];
         NSAttributedString *bugsAString =
-                [self attributedStringWithLinkToURL:@"https://iterm2.com/bugs"
+                [self attributedStringWithLinkToURL:@"https://github.com/SoInKyu/MomenTerm/issues"
                                               title:@"Report a bug"];
         NSAttributedString *creditsAString =
-                [self attributedStringWithLinkToURL:@"https://iterm2.com/credits"
+                [self attributedStringWithLinkToURL:@"https://github.com/SoInKyu/MomenTerm/blob/main/README.md"
                                               title:@"Credits"];
 
         // Force IBOutlets to be bound by creating window.
