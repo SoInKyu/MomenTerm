@@ -34,6 +34,18 @@ if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([._A-Za-z0-9-]*)?$ ]]; then
   exit 2
 fi
 TAG="momenterm-v$VERSION"
+# BUILD is a strictly monotonic 12-digit timestamp (YYYYMMDDHHMM, local TZ).
+# It is stamped into the bundle's CFBundleVersion AND the appcast's
+# <sparkle:version>; Sparkle's SUStandardVersionComparator compares those
+# two via NSNumericSearch, so they MUST share the same scheme or
+# update-already-installed comparisons go wrong. The Xcode build phase
+# "Rewrite version number in plist file" otherwise stamps "3.6.YYYYMMDD"
+# from version.txt — that prefix "3.6" loses to a 12-digit timestamp under
+# NSNumericSearch, which would put every freshly-installed v0.9.2+ bundle
+# back into "update available" every hour. Computing BUILD once at the top
+# guarantees the post-archive plist patch and the appcast substitution
+# share the same value.
+BUILD="$(date "+%Y%m%d%H%M")"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$REPO_ROOT/build/release"
 APP_NAME="MomenTerm"
@@ -133,6 +145,18 @@ if [ -n "$MAIN_EXPECTED" ] \
   mv "$APP_FINAL/Contents/MacOS/iTerm2" "$APP_FINAL/Contents/MacOS/$MAIN_EXPECTED"
 fi
 
+# Overwrite the Xcode build phase's "3.6.YYYYMMDD" stamping with the values
+# Sparkle will actually compare against the appcast. CFBundleVersion = BUILD
+# (12-digit timestamp matching <sparkle:version> in appcast.template.xml) so
+# SUStandardVersionComparator sees "same version" after install instead of
+# treating every check as "appcast newer than 3.6.…" and looping reinstalls
+# every hour. CFBundleShortVersionString = VERSION ("0.9.3") for the human
+# Finder/About-window display. v0.9.2 shipped without this and would have
+# loop-installed once SUAutomaticallyUpdate=YES kicked in.
+echo "[release] stamping bundle CFBundleVersion=$BUILD CFBundleShortVersionString=$VERSION ..."
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$APP_FINAL/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_FINAL/Contents/Info.plist"
+
 # Last-line defense: read the keys that just got embedded and refuse to ship
 # if they don't match release-iTerm2.plist. Catches "wrong plist got copied
 # in" and "someone rotated SUPublicEDKey in one place but not the other".
@@ -145,22 +169,30 @@ EXPECT_FEED="https://github.com/$REPO_SLUG/releases/latest/download/appcast.xml"
 EXPECT_AUTOCHECK="true"
 EXPECT_INTERVAL="3600"
 EXPECT_AUTOUPDATE="true"
+EXPECT_BUNDLE_VERSION="$BUILD"
+EXPECT_BUNDLE_SHORT="$VERSION"
 GOT_KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
 GOT_FEED="$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
 GOT_AUTOCHECK="$(/usr/libexec/PlistBuddy -c "Print :SUEnableAutomaticChecks" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
 GOT_INTERVAL="$(/usr/libexec/PlistBuddy -c "Print :SUScheduledCheckInterval" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
 GOT_AUTOUPDATE="$(/usr/libexec/PlistBuddy -c "Print :SUAutomaticallyUpdate" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+GOT_BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+GOT_BUNDLE_SHORT="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
 if [ "$GOT_KEY" != "$EXPECT_KEY" ] \
    || [ "$GOT_FEED" != "$EXPECT_FEED" ] \
    || [ "$GOT_AUTOCHECK" != "$EXPECT_AUTOCHECK" ] \
    || [ "$GOT_INTERVAL" != "$EXPECT_INTERVAL" ] \
-   || [ "$GOT_AUTOUPDATE" != "$EXPECT_AUTOUPDATE" ]; then
+   || [ "$GOT_AUTOUPDATE" != "$EXPECT_AUTOUPDATE" ] \
+   || [ "$GOT_BUNDLE_VERSION" != "$EXPECT_BUNDLE_VERSION" ] \
+   || [ "$GOT_BUNDLE_SHORT" != "$EXPECT_BUNDLE_SHORT" ]; then
   echo "error: Info.plist sparkle keys mismatch — aborting before zip/publish." >&2
-  echo "  SUPublicEDKey:              got='$GOT_KEY'         expected='$EXPECT_KEY'" >&2
-  echo "  SUFeedURL:                  got='$GOT_FEED'        expected='$EXPECT_FEED'" >&2
-  echo "  SUEnableAutomaticChecks:    got='$GOT_AUTOCHECK'   expected='$EXPECT_AUTOCHECK'" >&2
-  echo "  SUScheduledCheckInterval:   got='$GOT_INTERVAL'    expected='$EXPECT_INTERVAL'" >&2
-  echo "  SUAutomaticallyUpdate:      got='$GOT_AUTOUPDATE'  expected='$EXPECT_AUTOUPDATE'" >&2
+  echo "  SUPublicEDKey:              got='$GOT_KEY'              expected='$EXPECT_KEY'" >&2
+  echo "  SUFeedURL:                  got='$GOT_FEED'             expected='$EXPECT_FEED'" >&2
+  echo "  SUEnableAutomaticChecks:    got='$GOT_AUTOCHECK'        expected='$EXPECT_AUTOCHECK'" >&2
+  echo "  SUScheduledCheckInterval:   got='$GOT_INTERVAL'         expected='$EXPECT_INTERVAL'" >&2
+  echo "  SUAutomaticallyUpdate:      got='$GOT_AUTOUPDATE'       expected='$EXPECT_AUTOUPDATE'" >&2
+  echo "  CFBundleVersion:            got='$GOT_BUNDLE_VERSION'   expected='$EXPECT_BUNDLE_VERSION'" >&2
+  echo "  CFBundleShortVersionString: got='$GOT_BUNDLE_SHORT'     expected='$EXPECT_BUNDLE_SHORT'" >&2
   exit 1
 fi
 
@@ -192,7 +224,6 @@ fi
 # renders "금, 15  5 2026 ..." which is not RFC 822 — Sparkle's RSS parser
 # drops the item silently. v0.9.0's appcast hit exactly this.
 PUBDATE=$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")
-BUILD=$(date "+%Y%m%d%H%M")
 
 sed -e "s|__VERSION__|$VERSION|g" \
     -e "s|__BUILD__|$BUILD|g" \
