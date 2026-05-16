@@ -112,7 +112,7 @@
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="CR0-Qf-0XM"/>
-                            <menuItem title="Install Shell Integration" alternate="YES" identifier="Install Shell Integration" id="rHN-nq-xah">
+                            <menuItem title="Install Shell Integration" alternate="YES" hidden="YES" identifier="Install Shell Integration" id="rHN-nq-xah">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <connections>
                                     <action selector="installShellIntegration:" target="-1" id="QBH-7C-wWV"/>
@@ -275,7 +275,7 @@
                             <menuItem isSeparatorItem="YES" id="sr9-jE-RB0">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Broadcast Input" id="1261">
+                            <menuItem title="Broadcast Input" hidden="YES" id="1261">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Broadcast Input" id="1262">
                                     <items>
@@ -327,7 +327,7 @@
                             <menuItem isSeparatorItem="YES" id="1307">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="tmux" id="1448">
+                            <menuItem title="tmux" hidden="YES" id="1448">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="tmux" id="1449">
                                     <items>
@@ -604,11 +604,11 @@ DQ
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="jHq-aL-J2z"/>
-                            <menuItem title="Snippets" identifier="Edit.Snippets" id="s0f-jP-7Pk" userLabel="Snippets">
+                            <menuItem title="Snippets" hidden="YES" identifier="Edit.Snippets" id="s0f-jP-7Pk" userLabel="Snippets">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Snippets" id="sOq-3j-vtq" userLabel="Snippets"/>
                             </menuItem>
-                            <menuItem title="Actions" identifier="Edit.Actions" id="8Ja-GB-Waf">
+                            <menuItem title="Actions" hidden="YES" identifier="Edit.Actions" id="8Ja-GB-Waf">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Actions" id="w4F-uL-QPB" userLabel="Snippets"/>
                             </menuItem>
@@ -990,7 +990,7 @@ Gw
                                     <action selector="showHideNotes:" target="-1" id="bWx-ZS-6aE"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Show Composer" keyEquivalent="." identifier="Composer" id="Bhs-45-5yR">
+                            <menuItem title="Show Composer" keyEquivalent="." hidden="YES" identifier="Composer" id="Bhs-45-5yR">
                                 <modifierMask key="keyEquivalentModifierMask" shift="YES" command="YES"/>
                                 <connections>
                                     <action selector="compose:" target="-1" id="dCP-co-yhy"/>
@@ -1022,7 +1022,7 @@ Gw
                                     <action selector="toggleAutoCommandHistory:" target="-1" id="asy-Rr-9Eu"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Auto Composer" keyEquivalent="." identifier="Auto Composer" id="TJi-5Q-RCM">
+                            <menuItem title="Auto Composer" keyEquivalent="." hidden="YES" identifier="Auto Composer" id="TJi-5Q-RCM">
                                 <modifierMask key="keyEquivalentModifierMask" shift="YES" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="toggleAutoComposer:" target="-1" id="Oga-l4-yoN"/>
@@ -1031,7 +1031,7 @@ Gw
                             <menuItem isSeparatorItem="YES" id="gzL-UV-S2y">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Open Quickly" keyEquivalent="O" identifier="Open Quickly" id="Knm-gZ-dFc">
+                            <menuItem title="Open Quickly" keyEquivalent="O" hidden="YES" identifier="Open Quickly" id="Knm-gZ-dFc">
                                 <connections>
                                     <action selector="openQuickly:" target="201" id="B7o-gt-d3A"/>
                                 </connections>
@@ -1113,13 +1113,13 @@ CQ
                             <menuItem isSeparatorItem="YES" id="w7i-MX-J2b">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Run Coprocess…" keyEquivalent="r" identifier="Run Coprocess…" id="1305">
+                            <menuItem title="Run Coprocess…" keyEquivalent="r" hidden="YES" identifier="Run Coprocess…" id="1305">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="runCoprocess:" target="-1" id="1320"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Stop Coprocess" keyEquivalent="R" identifier="Stop Coprocess" id="1321">
+                            <menuItem title="Stop Coprocess" keyEquivalent="R" hidden="YES" identifier="Stop Coprocess" id="1321">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="stopCoprocess:" target="-1" id="1325"/>
@@ -1174,7 +1174,7 @@ CQ
                             <menuItem isSeparatorItem="YES" id="908">
                                 <modifierMask key="keyEquivalentModifierMask" command="YES"/>
                             </menuItem>
-                            <menuItem title="Triggers" identifier="Triggers" id="DB9-tf-hPg">
+                            <menuItem title="Triggers" hidden="YES" identifier="Triggers" id="DB9-tf-hPg">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" title="Triggers" id="Ixq-yO-JO6">
                                     <items>
@@ -1291,7 +1291,7 @@ CQ
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="vXn-Fa-KDE"/>
-                            <menuItem title="Terminal State" id="oeT-w1-6UG">
+                            <menuItem title="Terminal State" hidden="YES" id="oeT-w1-6UG">
                                 <modifierMask key="keyEquivalentModifierMask"/>
                                 <menu key="submenu" id="7tI-ug-IYb">
                                     <items>
@@ -1451,13 +1451,13 @@ CQ
                                 </menu>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="CRC-2n-duo"/>
-                            <menuItem title="Bury Session" keyEquivalent="B" identifier="Bury Session" id="m8k-FC-JBb">
+                            <menuItem title="Bury Session" keyEquivalent="B" hidden="YES" identifier="Bury Session" id="m8k-FC-JBb">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="bury:" target="-1" id="jki-EJ-MEs"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Buried Sessions" id="Weo-nd-iLL">
+                            <menuItem title="Buried Sessions" hidden="YES" id="Weo-nd-iLL">
                                 <menu key="submenu" title="Buried Sessions" autoenablesItems="NO" id="PTu-aD-qbz"/>
                             </menuItem>
                         </items>
@@ -1914,7 +1914,7 @@ CQ
                                 </menu>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="1190"/>
-                            <menuItem title="Password Manager" keyEquivalent="f" identifier="Password Manager" id="5">
+                            <menuItem title="Password Manager" keyEquivalent="f" hidden="YES" identifier="Password Manager" id="5">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="openPasswordManager:" target="-1" id="tkA-Pd-uSe"/>
