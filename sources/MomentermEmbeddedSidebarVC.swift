@@ -479,10 +479,20 @@ private struct DropTarget {
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("SidebarCol"))
         col.isEditable = false
         col.minWidth = 100
-        col.width = w - 4
+        // Fixed column width — purposely NOT auto-resizing to the scroll view.
+        // The sidebar can be hosted in the welcome window (legacy scrollers,
+        // ~15px reserved) or in the terminal window (overlay scrollers, 0px
+        // reserved). If we let the column autoresize, cell.bounds.width
+        // ends up 205 vs 220 in those two hosts and the trailing icons
+        // (refresh + AI badge), which are anchored to cell.bounds.width - 4,
+        // visibly slide ~15px rightward when the user transitions to the
+        // terminal — and feel like they're clipping against the boundary.
+        // Pinning to 205 keeps the icons at a constant x (= 201) across hosts,
+        // matching the welcome window's layout the user reads as canonical.
+        col.width = w - 15
         outlineView.addTableColumn(col)
         outlineView.outlineTableColumn = col
-        outlineView.columnAutoresizingStyle = .uniformColumnAutoresizingStyle
+        outlineView.columnAutoresizingStyle = .noColumnAutoresizing
         outlineView.registerForDraggedTypes([MomentermEmbeddedSidebarVC.projectDragType])
         outlineView.setDraggingSourceOperationMask(.move, forLocal: true)
         // We draw our own indicator; disable the built-in one so the two don't fight.
