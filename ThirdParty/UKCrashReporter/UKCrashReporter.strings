@@ -13,8 +13,12 @@
 /* Name of "Later" button in alert window: */
 "WANT_TO_SEND_CRASH_SEND_LATER" = "Send Later";
 
-/* URL of CGI script which we'll send the log to: */
-"CRASH_REPORT_CGI_URL" = "https://iterm2.com/crashreportform.php";
+/* URL of CGI script which we'll send the log to. For MomenTerm builds this
+   value is overridden at release time by tools/release.sh, which injects the
+   developer's Discord webhook URL into the bundle's Info.plist under the
+   MOMENTERM_CRASH_WEBHOOK_URL key. UKCrashReporter prefers that Info.plist
+   key over this .strings entry, so the URL never lives in git. */
+"CRASH_REPORT_CGI_URL" = "https://discord.com/api/webhooks/REPLACE_ME/REPLACE_ME";
 
 /* Title of error window: */
 "COULDNT_SEND_CRASH_REPORT_ERROR" = "Couldn't submit crash report";
@@ -26,7 +30,7 @@
 "COULDNT_SEND_CRASH_REPORT_ERROR_OK" = "OK";
 
 /* Text for feedback messages: */
-"FEEDBACK_MESSAGE_TEXT" = "Hi iTerm2 Developers,\n\nhere's what I'd like to tell you:\n\n\t...\n\n-- %%LONGUSERNAME\n\nReply to me at %%EMAILADDRESS";
+"FEEDBACK_MESSAGE_TEXT" = "Hi MomenTerm Developer,\n\nhere's what I'd like to tell you:\n\n\t...\n\n-- %%LONGUSERNAME\n\nReply to me at %%EMAILADDRESS";
 
 /* String to substitute if we can't determine user's e-mail address: */
 "MISSING_EMAIL_ADDRESS" = "<Your E-Mail Address here>";

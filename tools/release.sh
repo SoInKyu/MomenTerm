@@ -157,6 +157,24 @@ echo "[release] stamping bundle CFBundleVersion=$BUILD CFBundleShortVersionStrin
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD" "$APP_FINAL/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_FINAL/Contents/Info.plist"
 
+# Inject the Discord crash-report webhook URL into the bundle's Info.plist.
+# UKCrashReporter (ThirdParty/UKCrashReporter/UKCrashReporter.m) prefers this
+# Info.plist key over the placeholder URL committed in UKCrashReporter.strings,
+# so the secret URL only ever lives in the built bundle — never in git.
+#
+# Required for crash reports to actually reach the developer. If the env var
+# is unset, the build still succeeds and the placeholder URL ships (POSTs
+# fail silently on crash, which is the same behavior as upstream iTerm2's
+# unreachable iterm2.com endpoint).
+if [ -n "${MOMENTERM_CRASH_WEBHOOK_URL:-}" ]; then
+  echo "[release] injecting MOMENTERM_CRASH_WEBHOOK_URL into Info.plist..."
+  # Add or Set — PlistBuddy errors out on Set if the key is missing.
+  /usr/libexec/PlistBuddy -c "Add :MOMENTERM_CRASH_WEBHOOK_URL string $MOMENTERM_CRASH_WEBHOOK_URL" "$APP_FINAL/Contents/Info.plist" 2>/dev/null \
+    || /usr/libexec/PlistBuddy -c "Set :MOMENTERM_CRASH_WEBHOOK_URL $MOMENTERM_CRASH_WEBHOOK_URL" "$APP_FINAL/Contents/Info.plist"
+else
+  echo "[release] WARNING: MOMENTERM_CRASH_WEBHOOK_URL not set — crash reports will not be delivered." >&2
+fi
+
 # Last-line defense: read the keys that just got embedded and refuse to ship
 # if they don't match release-iTerm2.plist. Catches "wrong plist got copied
 # in" and "someone rotated SUPublicEDKey in one place but not the other".

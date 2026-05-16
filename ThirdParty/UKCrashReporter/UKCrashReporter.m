@@ -210,6 +210,87 @@ NSString* UKCrashReporterFindTenFiveCrashReportPath(NSString* appName, NSArray *
 NSString*    gCrashLogString = nil;
 
 
+// MomenTerm — Discord webhook delivery -------------------------------------
+//
+// Upstream UKCrashReporter posts a single `crashlog` form field to a CGI
+// script. MomenTerm instead posts to a Discord channel webhook so the dev
+// receives a push notification on every crash without running a server.
+//
+// The webhook URL is sensitive (anyone with it can spam the channel), so
+// we never commit it. tools/release.sh reads $MOMENTERM_CRASH_WEBHOOK_URL
+// and injects it into the built bundle's Info.plist under
+// MOMENTERM_CRASH_WEBHOOK_URL. MTMResolveCrashReportURL() prefers that
+// Info.plist value and falls back to UKCrashReporter.strings only when the
+// override is absent (dev builds, or release.sh wasn't run with the env
+// var set).
+
+static NSURL *MTMResolveCrashReportURL(void) {
+    NSString *override = [[[NSBundle mainBundle] infoDictionary] objectForKey:@"MOMENTERM_CRASH_WEBHOOK_URL"];
+    NSString *urlString = (override.length > 0)
+        ? override
+        : NSLocalizedStringFromTable(@"CRASH_REPORT_CGI_URL", @"UKCrashReporter", @"");
+    return [NSURL URLWithString:urlString];
+}
+
+static BOOL MTMIsDiscordWebhookURL(NSURL *url) {
+    NSString *host = url.host.lowercaseString;
+    if (host.length == 0) {
+        return NO;
+    }
+    return [host isEqualToString:@"discord.com"]
+        || [host isEqualToString:@"discordapp.com"]
+        || [host hasSuffix:@".discord.com"];
+}
+
+// Discord caps message content at 2000 chars. Crash reports are usually
+// 20–500 KB, so inline JSON only works in synthetic cases — almost every
+// real crash takes the multipart attachment branch. We still keep the
+// inline path because (a) feedback messages typed by the user often fit
+// and (b) it's much faster to read in the channel.
+static void MTMConfigureDiscordRequest(NSMutableURLRequest *request, NSString *crashReportString) {
+    NSString *const username = @"MomenTerm Crash";
+    const NSUInteger inlineCharLimit = 1800;
+
+    if (crashReportString.length <= inlineCharLimit) {
+        NSString *content = [NSString stringWithFormat:@"```\n%@\n```", crashReportString];
+        NSDictionary *payload = @{ @"username": username, @"content": content };
+        NSError *jsonErr = nil;
+        NSData *body = [NSJSONSerialization dataWithJSONObject:payload options:0 error:&jsonErr];
+        if (body && !jsonErr) {
+            [request setValue:@"application/json; charset=utf-8" forHTTPHeaderField:@"Content-Type"];
+            [request setHTTPBody:body];
+            return;
+        }
+        // Fall through to multipart on JSON serialization failure.
+    }
+
+    NSString *boundary = @"0xKhTmLbOuNdArYMomenTerm";
+    NSDictionary *payload = @{ @"username": username,
+                               @"content": @"Crash report attached (see crash.txt)." };
+    NSData *payloadJSON = [NSJSONSerialization dataWithJSONObject:payload options:0 error:nil];
+
+    NSMutableData *body = [NSMutableData data];
+    NSString *jsonPartHeader = [NSString stringWithFormat:
+        @"--%@\r\nContent-Disposition: form-data; name=\"payload_json\"\r\nContent-Type: application/json\r\n\r\n",
+        boundary];
+    [body appendData:[jsonPartHeader dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:payloadJSON];
+
+    NSString *filePartHeader = [NSString stringWithFormat:
+        @"\r\n--%@\r\nContent-Disposition: form-data; name=\"files[0]\"; filename=\"crash.txt\"\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n",
+        boundary];
+    [body appendData:[filePartHeader dataUsingEncoding:NSUTF8StringEncoding]];
+    [body appendData:[crashReportString dataUsingEncoding:NSUTF8StringEncoding]];
+
+    NSString *footer = [NSString stringWithFormat:@"\r\n--%@--\r\n", boundary];
+    [body appendData:[footer dataUsingEncoding:NSUTF8StringEncoding]];
+
+    NSString *contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary];
+    [request setValue:contentType forHTTPHeaderField:@"Content-Type"];
+    [request setHTTPBody:body];
+}
+
+
 @implementation UKCrashReporter {
     NSURLSessionDataTask *_dataTask;
 }
@@ -322,28 +403,35 @@ NSString*    gCrashLogString = nil;
     [crashReportString appendString: @"\n==========\n"];
     [crashReportString appendString: [crashLogField string]];
     [crashReportString replaceOccurrencesOfString: boundary withString: @"USED_TO_BE_KHTMLBOUNDARY" options: 0 range: NSMakeRange(0, [crashReportString length])];
-    NSData*                crashReport = [crashReportString dataUsingEncoding: NSUTF8StringEncoding];
-    
-    // Prepare a request:
-    NSURL *url = [NSURL URLWithString: NSLocalizedStringFromTable( @"CRASH_REPORT_CGI_URL", @"UKCrashReporter", @"" )];
+
+    // Prepare a request. MomenTerm prefers an Info.plist-injected Discord
+    // webhook URL; falls back to the .strings CGI URL otherwise.
+    NSURL *url = MTMResolveCrashReportURL();
     NSMutableURLRequest *postRequest = [NSMutableURLRequest requestWithURL: url];
-    NSString            *contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@",boundary];
     NSString            *agent = @"UKCrashReporter";
 
-    // Add form trappings to crashReport:
-    NSData*            header = [[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"crashlog\"\r\n\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding];
-    NSMutableData*    formData = [[header mutableCopy] autorelease];
-    [formData appendData: crashReport];
-    [formData appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n",boundary] dataUsingEncoding:NSUTF8StringEncoding]];
-    
-    // setting the headers:
     [postRequest setHTTPMethod: @"POST"];
     [postRequest setValue: url.host forHTTPHeaderField: @"Host"];
-    [postRequest setValue: contentType forHTTPHeaderField: @"Content-Type"];
     [postRequest setValue: agent forHTTPHeaderField: @"User-Agent"];
-    NSString *contentLength = [NSString stringWithFormat:@"%lu", (unsigned long)[formData length]];
+
+    if (MTMIsDiscordWebhookURL(url)) {
+        // Discord wants JSON (small) or multipart with payload_json + files[0]
+        // (large). MTMConfigureDiscordRequest sets Content-Type and HTTPBody.
+        MTMConfigureDiscordRequest(postRequest, crashReportString);
+    } else {
+        // Legacy upstream path: single `crashlog` form field.
+        NSData *crashReport = [crashReportString dataUsingEncoding: NSUTF8StringEncoding];
+        NSString *contentType = [NSString stringWithFormat:@"multipart/form-data; boundary=%@", boundary];
+        NSData *header = [[NSString stringWithFormat:@"--%@\r\nContent-Disposition: form-data; name=\"crashlog\"\r\n\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding];
+        NSMutableData *formData = [[header mutableCopy] autorelease];
+        [formData appendData: crashReport];
+        [formData appendData:[[NSString stringWithFormat:@"\r\n--%@--\r\n", boundary] dataUsingEncoding:NSUTF8StringEncoding]];
+        [postRequest setValue: contentType forHTTPHeaderField: @"Content-Type"];
+        [postRequest setHTTPBody: formData];
+    }
+
+    NSString *contentLength = [NSString stringWithFormat:@"%lu", (unsigned long)[[postRequest HTTPBody] length]];
     [postRequest setValue: contentLength forHTTPHeaderField: @"Content-Length"];
-    [postRequest setHTTPBody: formData];
     
     // Go into progress mode and kick off the HTTP post:
     [progressIndicator startAnimation: self];
