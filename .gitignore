@@ -97,3 +97,11 @@ report.md
 # Vibe-ready reports and vibe-coding workflow stubs
 docs/p-reports/
 docs/vibe-coding/
+
+# AI-generated reference docs (local-only; CLAUDE.md policy: only ship code)
+/CONTRIBUTING.md
+docs/README.md
+docs/architecture.md
+docs/build-system.md
+docs/development-guide.md
+docs/components/
