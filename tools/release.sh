@@ -66,6 +66,16 @@ ZIP_URL="https://github.com/$REPO_SLUG/releases/download/$TAG/$APP_NAME-$VERSION
 
 # -- Build & export ---------------------------------------------------------
 
+# The Deployment configuration's INFOPLIST_FILE points at plists/iTerm2.plist,
+# which Makefile targets overwrite by copying one of plists/{dev,beta,nightly,
+# preview,release}-iTerm2.plist on top of it. If the most recent `make` target
+# was `make run` (dev), a release cut would silently inherit dev-iTerm2.plist
+# — empty SUFeedURL, wrong SUPublicEDKey — and ship a bundle that can never
+# self-update. Force the release plist here so cuts are reproducible regardless
+# of prior make state. v0.9.0 shipped broken because of this.
+echo "[release] applying release-iTerm2.plist as Info.plist source..."
+cp "$REPO_ROOT/plists/release-iTerm2.plist" "$REPO_ROOT/plists/iTerm2.plist"
+
 echo "[release] xcodebuild archive (Deployment / iTerm2 scheme)..."
 # The Deployment build config still references the upstream iTerm2 author's
 # Developer ID. Until we sign up for our own Apple Developer cert, override
@@ -123,6 +133,22 @@ if [ -n "$MAIN_EXPECTED" ] \
   mv "$APP_FINAL/Contents/MacOS/iTerm2" "$APP_FINAL/Contents/MacOS/$MAIN_EXPECTED"
 fi
 
+# Last-line defense: read the keys that just got embedded and refuse to ship
+# if they don't match release-iTerm2.plist. Catches "wrong plist got copied
+# in" and "someone rotated SUPublicEDKey in one place but not the other".
+# Keep EXPECT_KEY synced with plists/release-iTerm2.plist:398-399.
+echo "[release] verifying Info.plist sparkle keys..."
+EXPECT_KEY="zhZBg6HvG2DqeH4pTnwqnC+0Ti4euC4tvDqawrn43pw="
+EXPECT_FEED="https://github.com/$REPO_SLUG/releases/latest/download/appcast.xml"
+GOT_KEY="$(/usr/libexec/PlistBuddy -c "Print :SUPublicEDKey" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+GOT_FEED="$(/usr/libexec/PlistBuddy -c "Print :SUFeedURL" "$APP_FINAL/Contents/Info.plist" 2>/dev/null || true)"
+if [ "$GOT_KEY" != "$EXPECT_KEY" ] || [ "$GOT_FEED" != "$EXPECT_FEED" ]; then
+  echo "error: Info.plist sparkle keys mismatch — aborting before zip/publish." >&2
+  echo "  SUPublicEDKey:  got='$GOT_KEY'  expected='$EXPECT_KEY'" >&2
+  echo "  SUFeedURL:      got='$GOT_FEED' expected='$EXPECT_FEED'" >&2
+  exit 1
+fi
+
 ditto -c -k --keepParent "$APP_FINAL" "$ZIP"
 
 ZIP_LENGTH=$(stat -f%z "$ZIP")
@@ -147,7 +173,10 @@ fi
 
 # -- Render appcast ---------------------------------------------------------
 
-PUBDATE=$(date -u "+%a, %d %b %Y %H:%M:%S +0000")
+# LC_ALL=C forces English month/day names; otherwise a Korean LC_TIME locale
+# renders "금, 15  5 2026 ..." which is not RFC 822 — Sparkle's RSS parser
+# drops the item silently. v0.9.0's appcast hit exactly this.
+PUBDATE=$(LC_ALL=C date -u "+%a, %d %b %Y %H:%M:%S +0000")
 BUILD=$(date "+%Y%m%d%H%M")
 
 sed -e "s|__VERSION__|$VERSION|g" \
