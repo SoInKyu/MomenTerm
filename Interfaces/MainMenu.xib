@@ -592,12 +592,12 @@ DQ
                                 </menu>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="b0A-74-lFS"/>
-                            <menuItem title="Engage Artificial Intelligence" keyEquivalent="y" identifier="Engage Artificial Intelligence" id="zgu-Gv-WUr">
+                            <menuItem title="Engage Artificial Intelligence" keyEquivalent="y" hidden="YES" identifier="Engage Artificial Intelligence" id="zgu-Gv-WUr">
                                 <connections>
                                     <action selector="performNaturalLanguageQuery:" target="-1" id="oJ4-at-Hbh"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Explain Output with AI" keyEquivalent="y" identifier="Explain Output with AI" id="vlr-uw-Err">
+                            <menuItem title="Explain Output with AI" keyEquivalent="y" hidden="YES" identifier="Explain Output with AI" id="vlr-uw-Err">
                                 <modifierMask key="keyEquivalentModifierMask" option="YES" command="YES"/>
                                 <connections>
                                     <action selector="explainOutputWithAI:" target="-1" id="fVo-Xm-7jt"/>
@@ -1165,7 +1165,7 @@ CQ
                                     <action selector="openPasteHistory:" target="-1" id="1143"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="Open AI Chat…" keyEquivalent="Y" identifier="Open AI Chat" id="tkq-fN-kF5">
+                            <menuItem title="Open AI Chat…" keyEquivalent="Y" hidden="YES" identifier="Open AI Chat" id="tkq-fN-kF5">
                                 <modifierMask key="keyEquivalentModifierMask" control="YES" command="YES"/>
                                 <connections>
                                     <action selector="openAIChat:" target="-1" id="e9b-aj-NLF"/>
@@ -1920,7 +1920,7 @@ CQ
                                     <action selector="openPasswordManager:" target="-1" id="tkA-Pd-uSe"/>
                                 </connections>
                             </menuItem>
-                            <menuItem title="AI Chats" keyEquivalent="Y" identifier="AI Chats" id="okQ-cw-xCt">
+                            <menuItem title="AI Chats" keyEquivalent="Y" hidden="YES" identifier="AI Chats" id="okQ-cw-xCt">
                                 <connections>
                                     <action selector="openAIChats:" target="201" id="Xdw-Tb-nB2"/>
                                 </connections>
