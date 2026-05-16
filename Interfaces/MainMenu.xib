@@ -1536,7 +1536,7 @@ CQ
                         </items>
                     </menu>
                 </menuItem>
-                <menuItem title="Profiles" identifier=".Profiles" id="591">
+                <menuItem title="Profiles" hidden="YES" identifier=".Profiles" id="591">
                     <menu key="submenu" title="Profiles" id="592">
                         <items>
                             <menuItem title="Open Profiles…" keyEquivalent="o" identifier="Open Profiles…" id="952">
@@ -1556,6 +1556,17 @@ CQ
                             </menuItem>
                         </items>
                         <accessibility identifier=".Profiles"/>
+                    </menu>
+                </menuItem>
+                <menuItem title="Project" id="Mom-Pj-001">
+                    <menu key="submenu" title="Project" id="Mom-Pj-002">
+                        <items>
+                            <menuItem title="Project Manager…" identifier="Project Manager" id="Mom-Pj-003">
+                                <connections>
+                                    <action selector="openMomentermProjects:" target="-1" id="Mom-Pj-004"/>
+                                </connections>
+                            </menuItem>
+                        </items>
                     </menu>
                 </menuItem>
                 <menuItem title="Window" id="19">
