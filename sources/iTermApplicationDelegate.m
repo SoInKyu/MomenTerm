@@ -1531,6 +1531,14 @@ void TurnOnDebugLoggingAutomatically(void) {
                                              selector:@selector(sparkleWillRestartApp:)
                                                  name:SUUpdaterWillRestartNotification
                                                object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(sparkleDidFindValidUpdate:)
+                                                 name:SUUpdaterDidFindValidUpdateNotification
+                                               object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+                                             selector:@selector(sparkleDidNotFindUpdate:)
+                                                 name:SUUpdaterDidNotFindUpdateNotification
+                                               object:nil];
 
     [[NSNotificationCenter defaultCenter] addObserver:self
                                              selector:@selector(processTypeDidChange:)
@@ -1732,6 +1740,27 @@ static iTermKeyEventReplayer *gReplayer;
     [[NSApp windows] makeObjectsPerformSelector:@selector(invalidateRestorableState)];
     _sparkleRestarting = YES;
     iTermRestorableStateController.forceSaveState = YES;
+}
+
+// Sparkle has confirmed a new version is available. Broadcast so every
+// MomentermBottomStripView pinned to the bottom of a window shows the Korean
+// "restart to apply" message — both the manually-triggered and the silent
+// scheduled path post this notification, so users see the same affordance
+// no matter how the check started.
+- (void)sparkleDidFindValidUpdate:(NSNotification *)notification {
+    [self it_postMomentermVersionStatus:MomentermBottomStripStatusUpdateReady];
+}
+
+// Sparkle reports we're already current. Broadcast so any strip that flipped
+// to "checking…" reverts to a brief "already up to date" badge.
+- (void)sparkleDidNotFindUpdate:(NSNotification *)notification {
+    [self it_postMomentermVersionStatus:MomentermBottomStripStatusNoUpdate];
+}
+
+- (void)it_postMomentermVersionStatus:(MomentermBottomStripStatus)status {
+    [[NSNotificationCenter defaultCenter] postNotificationName:MomentermBottomStripView.versionStatusNotification
+                                                        object:nil
+                                                      userInfo:@{ MomentermBottomStripView.versionStatusUserInfoKey: @(status) }];
 }
 
 - (void)itermDidDecodeWindowRestorableState:(NSNotification *)notification {

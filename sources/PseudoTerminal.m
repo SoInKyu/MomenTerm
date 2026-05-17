@@ -454,6 +454,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
     // MomenTerm: full-width bottom strip with inline-panel toggle buttons
     MomentermBottomStripView *_momentermBottomStripView;
+    MomentermAttentionBarView *_momentermAttentionBar;
+    NSTimer *_momentermAttentionTimer;
 
     // MomenTerm: floating windows that host the inline panels when detached
     NSWindow *_momentermGitGraphDetachedWindow;
@@ -762,6 +764,13 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     _contentView.shouldShowMomentermSidebar = YES;
     [self performSelector:@selector(it_setupMomentermToggleButton) withObject:nil afterDelay:0];
 
+    // MomenTerm: settings / Claude / Git Graph icons used to live in a
+    // title-bar accessory, but the compact window style mask drops the
+    // title bar entirely so those icons were invisible in terminal
+    // windows. They moved to the right side of `_momentermBottomStripView`
+    // (see MomentermBottomStripView.configureRightIconGroup) so the same
+    // affordances render on every window style.
+
     // MomenTerm: right-side inline Git Graph panel (mutually exclusive with browser).
     _momentermGitGraphPanelVC = [[MomentermGitGraphPanelVC alloc] init];
     _momentermGitGraphPanelVC.delegate = self;
@@ -774,6 +783,28 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     _momentermFileEditorVC.delegate = self;
     _contentView.momentermFileEditorPanelContainer = _momentermFileEditorVC.view;
     _contentView.shouldShowMomentermFileEditorPanel = NO;
+
+    // MomenTerm: 3px attention bar pinned to the top of the window that
+    // sweeps a left → right gradient whenever a non-foreground tab in this
+    // window receives output (`PTYSession.newOutput`). Polled on a 1 Hz
+    // cadence; iTerm2 already maintains newOutput per session so we just
+    // need to OR them together and skip the active tab.
+    const CGFloat attentionH = 3;
+    _momentermAttentionBar = [[MomentermAttentionBarView alloc]
+        initWithFrame:NSMakeRect(0,
+                                 NSHeight(_contentView.bounds) - attentionH,
+                                 NSWidth(_contentView.bounds),
+                                 attentionH)];
+    _momentermAttentionBar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+    [_contentView addSubview:_momentermAttentionBar
+                  positioned:NSWindowAbove
+                  relativeTo:nil];
+    _momentermAttentionTimer =
+        [[NSTimer scheduledTimerWithTimeInterval:1.0
+                                          target:self
+                                        selector:@selector(it_pollMomentermAttention:)
+                                        userInfo:nil
+                                         repeats:YES] retain];
 
     // MomenTerm: bottom strip hosting the Git Graph / Browser toggle buttons.
     _momentermBottomStripView = [[MomentermBottomStripView alloc] initWithFrame:NSZeroRect];
@@ -1411,6 +1442,47 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [self it_openInferredLocalhostURLInSystemBrowser];
 }
 
+- (void)momentermBottomStripDidTapVersion {
+    [_momentermBottomStripView setVersionStatus:MomentermBottomStripStatusChecking];
+    iTermApplicationDelegate *itad = [iTermApplication.sharedApplication delegate];
+    [itad checkForUpdatesFromMenu:nil];
+}
+
+- (void)momentermBottomStripDidTapSettingsFrom:(NSView *)anchor {
+    [_momentermSidebarVC presentSettingsMenuFrom:anchor];
+}
+
+- (void)momentermBottomStripDidTapClaude {
+    [_momentermSidebarVC launchClaudeForCurrentSelection];
+}
+
+// 1 Hz tick — flips the attention bar on whenever any non-active tab has
+// a session sitting on `newOutput`, off otherwise. iTerm2 clears newOutput
+// on the foreground session when it becomes selected (PTYSession.m:7042
+// + PTYTab.m:6664) so we don't need to clear anything manually.
+- (void)it_pollMomentermAttention:(NSTimer *)timer {
+    if (!_momentermAttentionBar) {
+        return;
+    }
+    BOOL anyBackgroundUnread = NO;
+    PTYTab *current = [self currentTab];
+    for (PTYTab *tab in [self tabs]) {
+        if (tab == current) {
+            continue;
+        }
+        for (PTYSession *session in [tab sessions]) {
+            if (session.newOutput) {
+                anyBackgroundUnread = YES;
+                break;
+            }
+        }
+        if (anyBackgroundUnread) {
+            break;
+        }
+    }
+    [_momentermAttentionBar setActive:anyBackgroundUnread];
+}
+
 // Infers a frontend URL from the active session's terminal output and opens
 // it in the user's default browser. Unlike the old inline panel, this never
 // toggles any window-internal view.
@@ -1590,7 +1662,7 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 // project differentiation comes from the tab label ("<project> (job)") and
 // from the active-vs-inactive selection state.
 - (NSColor *)it_momentermColorForSpaceName:(NSString *)spaceName {
-    return [NSColor colorWithHue:0.33 saturation:0.60 brightness:0.95 alpha:1.0];
+    return [NSColor colorWithHue:0.33 saturation:0.45 brightness:0.78 alpha:1.0];
 }
 
 // Returns a modified copy of the current session's profile (or defaultBookmark) that:
@@ -1719,6 +1791,35 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     return YES;
 }
 
+- (BOOL)sidebarDidRequestRunInExistingSessionWithProjectId:(NSString *)projectId
+                                                   command:(NSString *)command {
+    if (projectId.length == 0) {
+        return NO;
+    }
+    NSString *guid = [[MomentermSessionRegistry shared] latestSessionGuidForProjectId:projectId];
+    if (guid.length == 0) {
+        return NO;
+    }
+    PTYSession *target = nil;
+    for (PTYSession *s in [[iTermController sharedInstance] allSessions]) {
+        if ([s.guid isEqualToString:guid]) {
+            target = s;
+            break;
+        }
+    }
+    if (!target) {
+        [[MomentermSessionRegistry shared] unregisterWithSessionGuid:guid];
+        return NO;
+    }
+    [[iTermController sharedInstance] revealSessionWithGUID:guid];
+    [[MomentermSessionRegistry shared] touchWithSessionGuid:guid];
+    if (command.length > 0) {
+        NSString *toWrite = [command hasSuffix:@"\n"] ? command : [command stringByAppendingString:@"\n"];
+        [target writeTask:toWrite];
+    }
+    return YES;
+}
+
 - (void)sidebarDidRequestShowFileTreeWithPath:(NSString *)path
                                  projectName:(NSString *)projectName {
     // Toggle: clicking same project again closes the panel
@@ -1841,6 +1942,9 @@ ITERM_WEAKLY_REFERENCEABLE
     [_shortcutAccessoryViewController release];
     [_titleBarAccessoryTabBarViewController release];
     [_momentermSidebarVC release];
+    [_momentermAttentionTimer invalidate];
+    [_momentermAttentionTimer release];
+    [_momentermAttentionBar release];
     [_momentermToggleAccessory release];
     [_momentermFileTreeVC release];
     [_momentermFileTreePath release];

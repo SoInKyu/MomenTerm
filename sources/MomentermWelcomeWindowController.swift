@@ -14,12 +14,14 @@ import AppKit
 
 @objc final class MomentermWelcomeWindowController: NSWindowController,
                                                     NSWindowDelegate,
-                                                    MomentermEmbeddedSidebarDelegate {
+                                                    MomentermEmbeddedSidebarDelegate,
+                                                    MomentermBottomStripDelegate {
 
     private static var shared: MomentermWelcomeWindowController?
 
     private let sidebarVC = MomentermEmbeddedSidebarVC()
     private var welcomeView: MomentermWelcomeView?
+    private var bottomStripView: MomentermBottomStripView?
 
     @objc static func showSharedWelcome() {
         if shared == nil {
@@ -69,20 +71,55 @@ import AppKit
     private func setupContentView() {
         guard let content = window?.contentView else { return }
         let sidebarWidth: CGFloat = 220
+        let stripH: CGFloat = 30
         let w = content.bounds.width
         let h = content.bounds.height
 
+        let strip = MomentermBottomStripView(frame: NSRect(x: 0, y: 0, width: w, height: stripH),
+                                             showsToolButtons: true)
+        strip.autoresizingMask = [.width, .maxYMargin]
+        strip.delegate = self
+        content.addSubview(strip)
+        bottomStripView = strip
+
         let sidebar = sidebarVC.view
-        sidebar.frame = NSRect(x: 0, y: 0, width: sidebarWidth, height: h)
+        sidebar.frame = NSRect(x: 0, y: stripH, width: sidebarWidth, height: h - stripH)
         sidebar.autoresizingMask = [.height, .maxXMargin]
         content.addSubview(sidebar)
 
         let welcome = MomentermWelcomeView(frame: NSRect(
-            x: sidebarWidth, y: 0,
-            width: w - sidebarWidth, height: h))
+            x: sidebarWidth, y: stripH,
+            width: w - sidebarWidth, height: h - stripH))
         welcome.autoresizingMask = [.width, .height]
         content.addSubview(welcome)
         welcomeView = welcome
+    }
+
+    // MARK: - MomentermBottomStripDelegate
+
+    func momentermBottomStripDidTapGitGraph() {
+        // Welcome window has no terminal context; the icon affordance lives
+        // here for visual consistency with the title-bar toolbar but the
+        // panel itself only makes sense once a terminal is open.
+    }
+
+    func momentermBottomStripDidTapBrowser() {
+        // Same rationale as Git Graph above — no host terminal to attach to.
+    }
+
+    func momentermBottomStripDidTapVersion() {
+        bottomStripView?.setVersionStatus(.checking)
+        if let appDelegate = NSApp.delegate as? iTermApplicationDelegate {
+            appDelegate.checkForUpdatesFromMenu(nil)
+        }
+    }
+
+    func momentermBottomStripDidTapSettings(from anchor: NSView) {
+        sidebarVC.presentSettingsMenu(from: anchor)
+    }
+
+    func momentermBottomStripDidTapClaude() {
+        sidebarVC.launchClaudeForCurrentSelection()
     }
 
     // MARK: - MomentermEmbeddedSidebarDelegate
@@ -130,7 +167,12 @@ import AppKit
                                        aiCommand: String?) {
         var profile: [AnyHashable: Any] = iTermController.sharedInstance().defaultBookmark() ?? [:]
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
-        profile[KEY_WORKING_DIRECTORY] = path
+        // macOS returns NSOpenPanel + filesystem paths in NFD (decomposed)
+        // form. Passing that through to KEY_WORKING_DIRECTORY makes the shell
+        // set PWD to NFD, which then renders in the prompt as separated jamo
+        // ("개인" → "ㄱ ㅐㅇ ㅣㄴ"). Normalising to NFC keeps the path
+        // visually identical to how the user typed it.
+        profile[KEY_WORKING_DIRECTORY] = path.precomposedStringWithCanonicalMapping
         profile[KEY_USE_TAB_COLOR] = NSNumber(value: true)
         profile[KEY_TAB_COLOR] = ITAddressBookMgr.encode(colorForSpaceName(spaceName))
         profile[KEY_ALLOW_TITLE_SETTING] = NSNumber(value: false)
@@ -161,6 +203,14 @@ import AppKit
             if let frame = targetFrame,
                let newWindow = session.delegate?.realParentWindow()?.window {
                 newWindow.setFrame(frame, display: false, animate: false)
+                // iTerm2's `fitWindowToTabs` (PseudoTerminal.m:6235) and the
+                // initial windowDidResize pass run AFTER this callback, so
+                // re-apply on the next runloop turn to win the layout race
+                // and keep the new terminal window at the welcome window's
+                // exact pixel dimensions.
+                DispatchQueue.main.async {
+                    newWindow.setFrame(frame, display: true, animate: false)
+                }
             }
             if !projectId.isEmpty, let guid = session.guid {
                 MomentermSessionRegistry.shared.register(sessionGuid: guid, projectId: projectId)
@@ -173,7 +223,7 @@ import AppKit
         // Mirrors PseudoTerminal.m it_momentermColorForSpaceName: — single
         // bright fluorescent green for every active tab. The spaceName arg is
         // kept for call-site stability but no longer drives the colour.
-        return NSColor(hue: 0.33, saturation: 0.60, brightness: 0.95, alpha: 1.0)
+        return NSColor(hue: 0.33, saturation: 0.45, brightness: 0.78, alpha: 1.0)
     }
 
     // MARK: - NSWindowDelegate

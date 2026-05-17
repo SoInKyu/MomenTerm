@@ -26,6 +26,14 @@ import AppKit
     /// return false so the sidebar can fall through to its default behavior (select-only).
     @discardableResult
     func sidebarDidRequestActivateExistingSession(projectId: String) -> Bool
+    /// Called by the bottom-strip Claude affordance. If a live session exists for
+    /// `projectId`, the host must focus it, write `command` to its PTY, and return
+    /// true; otherwise return false so the sidebar opens a fresh tab seeded with
+    /// the command instead. The difference from `…ActivateExistingSession` is the
+    /// injected text — `…ActivateExistingSession` just focuses, while this method
+    /// also runs `command` in the focused session.
+    @objc optional func sidebarDidRequestRunInExistingSession(projectId: String,
+                                                              command: String) -> Bool
 }
 
 // MARK: - WorkspaceCellView (hover "+" button)
@@ -334,8 +342,11 @@ private struct DropTarget {
 
     private var searchField: NSSearchField!
     private var addButton: NSButton!
-    private var settingsButton: NSButton!
     private var separator: NSBox!
+    /// Last view used to anchor the settings menu — the title-bar gear button.
+    /// Stored weakly so guide/shortcuts popovers (opened from menu items that
+    /// fire AFTER the menu has dismissed) can still find a sensible anchor.
+    private weak var lastSettingsAnchor: NSView?
     private var outlineView: MtSidebarOutlineView!
     private var scrollView: NSScrollView!
     private var dropOverlay: DropOverlayView!
@@ -417,8 +428,10 @@ private struct DropTarget {
         searchField.controlSize = .small
         view.addSubview(searchField)
 
-        // "+" button — second from right
-        addButton = NSButton(frame: NSRect(x: w - 50, y: 1, width: 20, height: 20))
+        // "+" button — rightmost. The settings gear moved to the title-bar
+        // accessory view (see MomentermTitlebarAccessoryVC); the space it
+        // vacated is left as breathing room rather than collapsed.
+        addButton = NSButton(frame: NSRect(x: w - 28, y: 1, width: 20, height: 20))
         addButton.autoresizingMask = [.minXMargin, .minYMargin]
         addButton.bezelStyle = .inline
         addButton.isBordered = false
@@ -426,17 +439,6 @@ private struct DropTarget {
         addButton.target = self
         addButton.action = #selector(addSpaceTapped)
         view.addSubview(addButton)
-
-        // Settings gear — rightmost
-        settingsButton = NSButton(frame: NSRect(x: w - 26, y: 2, width: 18, height: 18))
-        settingsButton.autoresizingMask = [.minXMargin, .minYMargin]
-        settingsButton.isBordered = false
-        settingsButton.imagePosition = .imageOnly
-        settingsButton.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "설정")
-        settingsButton.contentTintColor = .secondaryLabelColor
-        settingsButton.target = self
-        settingsButton.action = #selector(settingsTapped)
-        view.addSubview(settingsButton)
 
         // Separator between search bar and list
         separator = NSBox(frame: NSRect(x: 0, y: 0, width: w, height: 1))
@@ -574,9 +576,8 @@ private struct DropTarget {
         let w = view.bounds.width
         let topH: CGFloat = 36   // search bar height — matches file tree kHeaderH
         let sepH: CGFloat = 1
-        searchField.frame    = NSRect(x: 8, y: h - topH + 7, width: w - 64, height: 22)
-        addButton.frame      = NSRect(x: w - 50, y: h - topH + 8, width: 20, height: 20)
-        settingsButton.frame = NSRect(x: w - 26, y: h - topH + 9, width: 18, height: 18)
+        searchField.frame    = NSRect(x: 8, y: h - topH + 7, width: w - 40, height: 22)
+        addButton.frame      = NSRect(x: w - 28, y: h - topH + 8, width: 20, height: 20)
         separator.frame      = NSRect(x: 0, y: h - topH - sepH, width: w, height: sepH)
         scrollView.frame     = NSRect(x: 0, y: 0, width: w, height: h - topH - sepH)
         dropOverlay?.frame   = scrollView.frame
@@ -808,40 +809,31 @@ private struct DropTarget {
             return
         }
 
-        // If a tab/window is already open for this project, jump straight to it
-        // instead of prompting "새 탭 / 새 창". The dialog is reserved for the
-        // explicit "open another instance" case. (Matches the single-click rule:
-        // existing work = navigate, new work = choose.)
+        // If a tab/window is already open for this project, jump straight to it.
+        // Otherwise create a new tab and auto-launch the project's AI command —
+        // double-click is the single entry point now that the per-row star icon
+        // has been removed.
         if sidebarDelegate?.sidebarDidRequestActivateExistingSession(projectId: project.id) == true {
             return
         }
 
-        let alert = NSAlert()
-        alert.messageText = "\u{201C}\(project.name)\u{201D} 열기"
-        alert.addButton(withTitle: "새 탭")
-        alert.addButton(withTitle: "새 창")
-        alert.addButton(withTitle: "취소")
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
-                                                         spaceName: space.name,
-                                                         projectName: project.name,
-                                                         projectId: project.id,
-                                                         inNewTab: true,
-                                                         aiCommand: nil)
-        } else if response == .alertSecondButtonReturn {
-            sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
-                                                         spaceName: space.name,
-                                                         projectName: project.name,
-                                                         projectId: project.id,
-                                                         inNewTab: false,
-                                                         aiCommand: nil)
-        }
+        sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
+                                                     spaceName: space.name,
+                                                     projectName: project.name,
+                                                     projectId: project.id,
+                                                     inNewTab: true,
+                                                     aiCommand: project.aiLaunchCommand)
     }
 
     // MARK: - Settings Popover and Menu
 
-    @objc private func settingsTapped() {
+    /// Pops the sidebar settings menu beneath `anchor`. The title-bar
+    /// `MomentermTitlebarAccessoryVC` calls this with its own gear button as
+    /// the anchor, and the anchor is stashed so guide/shortcut popovers
+    /// (opened by menu items that fire AFTER the menu closes) keep a
+    /// sensible relative position.
+    @objc func presentSettingsMenu(from anchor: NSView) {
+        lastSettingsAnchor = anchor
         let menu = NSMenu()
 
         let guideItem = NSMenuItem(title: "MomenTerm 사용 가이드", action: #selector(showUserGuidePopover), keyEquivalent: "")
@@ -882,8 +874,61 @@ private struct DropTarget {
         viewModeParent.submenu = viewModeMenu
         menu.addItem(viewModeParent)
 
-        let btnFrame = settingsButton.convert(settingsButton.bounds, to: nil)
-        menu.popUp(positioning: menu.items[0], at: NSPoint(x: btnFrame.minX, y: btnFrame.minY), in: settingsButton.window?.contentView)
+        let btnFrame = anchor.convert(anchor.bounds, to: nil)
+        menu.popUp(positioning: menu.items[0],
+                   at: NSPoint(x: btnFrame.minX, y: btnFrame.minY),
+                   in: anchor.window?.contentView)
+    }
+
+    /// Launches Claude for the project bound to the currently active terminal
+    /// tab (preferred) or, failing that, the row the user has selected in the
+    /// sidebar. If a live session already exists for that project the host
+    /// focuses it and injects the project's AI launch command; otherwise a
+    /// new tab is opened seeded with the same command. Used by the
+    /// bottom-strip Claude affordance.
+    @objc func launchClaudeForCurrentSelection() {
+        guard let resolved = resolveClaudeTarget() else { return }
+        let project = resolved.project
+        let space = resolved.space
+        let command = project.aiLaunchCommand ?? ""
+
+        if !command.isEmpty,
+           sidebarDelegate?.sidebarDidRequestRunInExistingSession?(projectId: project.id,
+                                                                  command: command) == true {
+            return
+        }
+        sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
+                                                     spaceName: space.name,
+                                                     projectName: project.name,
+                                                     projectId: project.id,
+                                                     inNewTab: true,
+                                                     aiCommand: project.aiLaunchCommand)
+    }
+
+    /// Picks the project the Claude affordance should target. The currently
+    /// active terminal tab wins — it matches the user's mental model of
+    /// "run Claude in this tab". If no tab is active (Welcome window, or a
+    /// terminal whose active tab has no project mapping) we fall back to the
+    /// sidebar's selected row.
+    private func resolveClaudeTarget() -> (project: MomentermProject, space: MomentermProjectSpace)? {
+        if let activeId = activeProjectId {
+            for space in store.spaces {
+                if let p = space.projects.first(where: { $0.id == activeId }) {
+                    return (p, space)
+                }
+            }
+        }
+        let row = outlineView.selectedRow
+        guard row >= 0 else { return nil }
+        let item: SidebarItem?
+        if let filtered = filteredItems {
+            guard row < filtered.count else { return nil }
+            item = filtered[row]
+        } else {
+            item = outlineView.item(atRow: row) as? SidebarItem
+        }
+        guard let item, case .project(let project, let space) = item else { return nil }
+        return (project, space)
     }
 
     @objc private func setFileViewModePanel() {
@@ -1037,7 +1082,8 @@ private struct DropTarget {
         vc.view = contentView
         popover.contentViewController = vc
         popover.contentSize = contentView.frame.size
-        popover.show(relativeTo: settingsButton.bounds, of: settingsButton, preferredEdge: .maxY)
+        let anchor: NSView = lastSettingsAnchor ?? view
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 
     // MARK: - User Guide (신규 사용자 가이드)
@@ -1079,7 +1125,8 @@ private struct DropTarget {
         vc.view = scrollView
         popover.contentViewController = vc
         popover.contentSize = NSSize(width: w, height: h)
-        popover.show(relativeTo: settingsButton.bounds, of: settingsButton, preferredEdge: .maxY)
+        let anchor: NSView = lastSettingsAnchor ?? view
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .maxY)
     }
 
     private func makeUserGuideAttributedString() -> NSAttributedString {
@@ -1858,10 +1905,9 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
         if isHeader {
             labelRightPad = 20
         } else if MtSidebarFileViewMode.current == .inline {
-            // Matches the slim makeInlineActionStrip: 1 icon × 14 (no
-            // background, no padding) + 4 gap + 14 (AI badge) + 4 right
-            // margin = 36.
-            labelRightPad = 14 + 4 + 14 + 4 + 4
+            // Reserve room for an optional warning badge anchored to the right
+            // edge (only shown when the project path is missing).
+            labelRightPad = 14 + 4 + 4
         } else {
             labelRightPad = 38
         }
@@ -1885,11 +1931,11 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
 
         // ── Project cell right-side badges ────────────────────────────
         // Layout (right-to-left):
-        //   • inline mode:  [action strip] [AI/warning]    (no folder icon —
-        //                   the disclosure triangle takes over expand/collapse)
-        //   • panel  mode:  [folder] [AI/warning]
-        // The AI badge is anchored to the right edge in both modes so the
-        // Claude Code launch click target sits in a predictable spot.
+        //   • inline mode:  [warning?]    (no folder icon — disclosure triangle
+        //                                  handles expand/collapse)
+        //   • panel  mode:  [folder] [warning?]
+        // The AI launch entry point moved to double-click on the project row
+        // and to the title-bar Claude icon.
         let badgeSize: CGFloat = 14
         let isInlineMode = MtSidebarFileViewMode.current == .inline
         let folderX = cell.bounds.width - badgeSize - 4
@@ -1918,16 +1964,7 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
             cell.addSubview(folderBtn)
         }
 
-        // Inline mode: 4-icon action strip lives permanently next to the
-        // project name (new file / new folder / refresh / collapse all). The
-        // label reserves matching right-side padding so a short name never
-        // collides with the strip; long names truncate with "…" before reaching it.
-        if isInlineMode, let projectCell = cell as? ProjectCellView {
-            let strip = makeInlineActionStrip(rightOf: aiX, badgeSize: badgeSize, rowHeight: cell.bounds.height)
-            projectCell.setActionStrip(strip, alwaysVisible: true)
-        }
-
-        // Left badge: warning takes priority over AI icon
+        // Right-side warning badge (only when project path is missing).
         if accent {
             let warnView = NSImageView(frame: NSRect(x: aiX, y: 5, width: badgeSize, height: badgeSize))
             warnView.autoresizingMask = [.minXMargin]
@@ -1938,57 +1975,9 @@ extension MomentermEmbeddedSidebarVC: NSOutlineViewDelegate {
             }
             warnView.contentTintColor = .systemRed
             cell.addSubview(warnView)
-        } else if let tool = aiTool {
-            let spec = AIIconSpec.spec(for: tool, localBackend: localBackend)
-            let aiBtn = NSButton(frame: NSRect(x: aiX, y: 5, width: badgeSize, height: badgeSize))
-            aiBtn.autoresizingMask = [.minXMargin]
-            aiBtn.isBordered = false
-            aiBtn.imagePosition = .imageOnly
-            aiBtn.imageScaling = .scaleProportionallyUpOrDown
-            if let assetName = spec.assetName, let asset = NSImage(named: assetName) {
-                aiBtn.image = asset
-                aiBtn.contentTintColor = nil  // brand asset is multi-color; do not tint
-            } else {
-                let symConfig = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
-                aiBtn.image = NSImage(systemSymbolName: spec.symbolName, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(symConfig)
-                aiBtn.contentTintColor = spec.tint
-            }
-            aiBtn.target = self
-            aiBtn.action = #selector(aiIconClicked(_:))
-            cell.addSubview(aiBtn)
         }
 
         return cell
-    }
-
-    /// Handles taps on the per-project AI tool icon.
-    /// Asks the user to confirm closing the default terminal, then opens with AI command.
-    @objc private func aiIconClicked(_ sender: NSButton) {
-        // Walk up to the enclosing NSTableCellView to find the row index.
-        var view: NSView? = sender
-        while let v = view, !(v is NSTableCellView) { view = v.superview }
-        guard let cellView = view else { return }
-        let row = outlineView.row(for: cellView)
-        guard row >= 0 else { return }
-
-        let sidebarItem: SidebarItem?
-        if let filtered = filteredItems {
-            guard row < filtered.count else { return }
-            sidebarItem = filtered[row]
-        } else {
-            sidebarItem = outlineView.item(atRow: row) as? SidebarItem
-        }
-        guard let sidebarItem, case .project(let project, let space) = sidebarItem else { return }
-
-        sidebarDelegate?.sidebarDidRequestOpenProject(
-            path: project.path,
-            spaceName: space.name,
-            projectName: project.name,
-            projectId: project.id,
-            inNewTab: true,
-            aiCommand: project.aiLaunchCommand
-        )
     }
 
     /// Handles taps on the per-project folder icon — opens the file tree
@@ -2913,52 +2902,6 @@ extension MomentermEmbeddedSidebarVC {
 
 extension MomentermEmbeddedSidebarVC {
 
-    // MARK: Hover-revealed action strip
-
-    /// Returns a self-contained 4-icon action overlay (new file / new folder /
-    /// refresh / collapse) positioned to the LEFT of the existing AI badge.
-    /// Uses a subtle layer-backed pill so it stays readable when it overlays
-    /// the project name on hover.
-    fileprivate func makeInlineActionStrip(rightOf aiX: CGFloat,
-                                           badgeSize: CGFloat,
-                                           rowHeight: CGFloat) -> NSView {
-        // Single-icon strip (refresh only). "모두 접기" was removed at user
-        // request and "새 파일 / 새 폴더" moved to the project's right-click
-        // menu, so the strip is just a quiet refresh affordance next to the
-        // AI badge. No tinted backdrop; this isn't a featured action.
-        let gap: CGFloat = 3
-        let actions: [(String, String, Selector)] = [
-            ("arrow.clockwise", "새로고침", #selector(inlineRefreshTapped(_:))),
-        ]
-        let contentW = CGFloat(actions.count) * badgeSize + CGFloat(actions.count - 1) * gap
-        let stripW = contentW
-        let stripH = badgeSize + 4
-        // Right edge sits just left of the AI badge with a 4px gap.
-        let stripX = aiX - 4 - stripW
-        let stripY = (rowHeight - stripH) / 2.0
-        let container = NSView(frame: NSRect(x: stripX, y: stripY, width: stripW, height: stripH))
-        container.autoresizingMask = [.minXMargin]
-
-        let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
-        var x: CGFloat = 0
-        for (symbol, tip, action) in actions {
-            let btn = NSButton(frame: NSRect(x: x, y: (stripH - badgeSize) / 2.0,
-                                              width: badgeSize, height: badgeSize))
-            btn.isBordered = false
-            btn.imagePosition = .imageOnly
-            btn.imageScaling = .scaleProportionallyUpOrDown
-            btn.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)?
-                .withSymbolConfiguration(cfg)
-            btn.contentTintColor = .secondaryLabelColor
-            btn.toolTip = tip
-            btn.target = self
-            btn.action = action
-            container.addSubview(btn)
-            x += badgeSize + gap
-        }
-        return container
-    }
-
     // MARK: Sender → owning project
 
     /// Resolves the (project, space, rootURL) triple for an action button that
@@ -2998,11 +2941,6 @@ extension MomentermEmbeddedSidebarVC {
     @objc fileprivate func projectMenuNewFolder(_ sender: NSMenuItem) {
         guard let project = sender.representedObject as? MomentermProject else { return }
         promptCreateInProject(project, isFolder: true)
-    }
-
-    @objc fileprivate func inlineRefreshTapped(_ sender: Any) {
-        guard let (project, _) = projectContext(for: sender) else { return }
-        refreshInlineTree(forProjectId: project.id)
     }
 
     @objc fileprivate func inlineCollapseTapped(_ sender: Any) {

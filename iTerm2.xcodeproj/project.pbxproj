@@ -965,6 +965,7 @@
 		6998793AE8C54A0EAE7D5D0F /* PillBackgroundRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F3AA921DF1744D7BA890104 /* PillBackgroundRenderer.swift */; };
 		6B32FB39CF182E0A3166DC1D /* MomentermLocalhostURLScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9086C14331A22AB325E5DC2 /* MomentermLocalhostURLScanner.swift */; };
 		6C0FD6BA115D3C08BBE009B0 /* iTermImageComparison.m in Sources */ = {isa = PBXBuildFile; fileRef = 2AEB275FE345E8480B41FAEF /* iTermImageComparison.m */; };
+		6ECF849F1EDC063566C3730E /* MomentermTitlebarAccessoryVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = E516C7A7310B0D8FDB6C95ED /* MomentermTitlebarAccessoryVC.swift */; };
 		70C067D3E9484CA9A48D69BD /* ButtonPillInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7E1E38CBCE5463DA81CC1CF /* ButtonPillInfo.swift */; };
 		70F805A3A750CCB540F58C9A /* MovePaneController+API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40D246CFCEDD7927D320BF51 /* MovePaneController+API.swift */; };
 		72F96FAF9480758B4A2336E0 /* iTermAdapterSettingsRevealHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6373295DEB74E8DFC995A362 /* iTermAdapterSettingsRevealHelper.swift */; };
@@ -998,6 +999,7 @@
 		90A1E13B186F9EA4003EC3E8 /* AppleScriptTest.m in Sources */ = {isa = PBXBuildFile; fileRef = 90A1E13A186F9EA4003EC3E8 /* AppleScriptTest.m */; };
 		974D4DB2CB194E54C974C9E7 /* iTermUnderlineSpanTestHelper.h in Sources */ = {isa = PBXBuildFile; fileRef = A1CFE6250A5A52C13FF77218 /* iTermUnderlineSpanTestHelper.h */; };
 		98063D9BFF61AB290BEE435C /* iTermCursorSlideAnimator.m in Sources */ = {isa = PBXBuildFile; fileRef = 479FDFE9C0F424FEC10526EC /* iTermCursorSlideAnimator.m */; };
+		9811AA6A1FA700B7FBAB4A92 /* MomentermAttentionBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1D48A6556960C73A8046CD57 /* MomentermAttentionBarView.swift */; };
 		98654E0463C3052C2519C5F8 /* plugins.default.json in Resources */ = {isa = PBXBuildFile; fileRef = 8708C08A490EF1C2F493B015 /* plugins.default.json */; };
 		9BDDD62C960E04CEA1F1B0F2 /* MomentermCCStatusBarComponentImpl.m in Sources */ = {isa = PBXBuildFile; fileRef = 59E8C286069801E089BBBA7F /* MomentermCCStatusBarComponentImpl.m */; };
 		9C2DA778D246D42A1DC362CC /* iTermUploadIndicator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 698B6ED16A3CD11D402C364B /* iTermUploadIndicator.swift */; };
@@ -5784,6 +5786,7 @@
 		1D468BBF1B056CD600226083 /* iTermProfileSearchToken.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = iTermProfileSearchToken.m; sourceTree = "<group>"; };
 		1D468F021B06A79000226083 /* StopTrigger.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = StopTrigger.h; sourceTree = "<group>"; };
 		1D468F031B06A79000226083 /* StopTrigger.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = StopTrigger.m; sourceTree = "<group>"; };
+		1D48A6556960C73A8046CD57 /* MomentermAttentionBarView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermAttentionBarView.swift; sourceTree = "<group>"; };
 		1D48B27E165F362B000046EE /* TabClose_Front_Rollover@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "TabClose_Front_Rollover@2x.png"; sourceTree = "<group>"; };
 		1D48B27F165F362B000046EE /* TabClose_Front_Pressed@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "TabClose_Front_Pressed@2x.png"; sourceTree = "<group>"; };
 		1D48B280165F362B000046EE /* TabClose_Front@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = "TabClose_Front@2x.png"; sourceTree = "<group>"; };
@@ -9352,6 +9355,7 @@
 		DE7B0AE10E1598EDE1E01795 /* iTermEventTriggerParameterView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermEventTriggerParameterView.swift; sourceTree = "<group>"; };
 		E1DCDB86FBBA5C3B72776075 /* MomentermMarkdownTemplate.html */ = {isa = PBXFileReference; includeInIndex = 1; path = MomentermMarkdownTemplate.html; sourceTree = "<group>"; };
 		E4831413647FBBB9AA02FEDB /* MomentermFileTreeVC.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermFileTreeVC.swift; sourceTree = "<group>"; };
+		E516C7A7310B0D8FDB6C95ED /* MomentermTitlebarAccessoryVC.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermTitlebarAccessoryVC.swift; sourceTree = "<group>"; };
 		E6CB27B6647329ACD05CE222 /* iTermCompactProxyIconView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermCompactProxyIconView.swift; sourceTree = "<group>"; };
 		E7E1E38CBCE5463DA81CC1CF /* ButtonPillInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ButtonPillInfo.swift; sourceTree = "<group>"; };
 		E8A66F030272453F03A80106 /* iTermController.m */ = {isa = PBXFileReference; fileEncoding = 30; indentWidth = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = iTermController.m; sourceTree = "<group>"; tabWidth = 4; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
@@ -9763,6 +9767,8 @@
 				116668636D87170D14837676 /* MomentermWelcomeWindowController.swift */,
 				D0AB973E5C09DBEB81A0AA1C /* MomentermSessionRegistry.swift */,
 				2F806287655F9A99FF805BFD /* MomentermProjectRestorer.swift */,
+				E516C7A7310B0D8FDB6C95ED /* MomentermTitlebarAccessoryVC.swift */,
+				1D48A6556960C73A8046CD57 /* MomentermAttentionBarView.swift */,
 			);
 			name = Classes;
 			path = sources/;
@@ -20545,6 +20551,8 @@
 				9F09921623C058289BC9C9B9 /* MomentermWelcomeWindowController.swift in Sources */,
 				17A0546EB4A462E2840ABB44 /* MomentermSessionRegistry.swift in Sources */,
 				8D74189C5AE4352C5BE6FDEE /* MomentermProjectRestorer.swift in Sources */,
+				6ECF849F1EDC063566C3730E /* MomentermTitlebarAccessoryVC.swift in Sources */,
+				9811AA6A1FA700B7FBAB4A92 /* MomentermAttentionBarView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

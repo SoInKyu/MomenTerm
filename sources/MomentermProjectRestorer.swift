@@ -304,7 +304,10 @@ import AppKit
                                    aiCommand: String?) {
         var profile = iTermController.sharedInstance().defaultBookmark() ?? [:]
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
-        profile[KEY_WORKING_DIRECTORY] = effectiveCWD
+        // NFC normalisation prevents Korean filename paths from rendering
+        // as decomposed jamo in the shell prompt (see launchProjectTerminal
+        // in MomentermWelcomeWindowController for the same fix).
+        profile[KEY_WORKING_DIRECTORY] = effectiveCWD.precomposedStringWithCanonicalMapping
         profile[KEY_NAME] = project.name
         profile[KEY_ALLOW_TITLE_SETTING] = NSNumber(value: false)
         // Tab title: SessionName | Job → "<project> (<job>)" (matches PseudoTerminal.m).
