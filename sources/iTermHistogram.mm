@@ -93,15 +93,25 @@ namespace iTerm2 {
             if (other._weight == 0) {
                 return;
             }
-            assert(other._capacity == _capacity);
+            // Terminate-time saver merges histograms across sessions that may
+            // have been built with different reservoir sizes or that drifted
+            // into _weight>0 / _values.empty() during long-running processes.
+            // Sampling is best-effort telemetry; skip rather than trap.
+            // Replaces 4 plain asserts that were trapping Sparkle's
+            // terminate-and-relaunch via iTermRestorableStateController
+            // saveSynchronously → iTermHistogram mergeFrom: (incident
+            // D833CFF1, post v0.9.5→v0.9.6 silent install).
+            if (other._capacity != _capacity) {
+                return;
+            }
             if (_weight == 0) {
                 _values = other._values;
                 _weight = other._weight;
                 return;
             }
-            assert(_values.size() > 0);
-            assert(_values.size() <= _capacity);
-            assert(other._values.size() > 0);
+            if (_values.empty() || _values.size() > _capacity || other._values.empty()) {
+                return;
+            }
             std::vector<double> merged_values;
 
             // Shuffle the two values array because we want to sample from them. Make copies so this
@@ -151,8 +161,13 @@ namespace iTerm2 {
                                  std::begin(other_values),
                                  std::begin(other_values) + N2);
             _values = merged_values;
-            assert(_values.size() <= _capacity);
-            assert(_values.size() > 0);
+            // floor() in P1/P2 arithmetic can in theory produce N1+N2 == 0 for
+            // pathological weight/size ratios, or briefly exceed _capacity if
+            // upstream invariants drifted. Both are recoverable telemetry
+            // states; clamp rather than assert.
+            if (_values.size() > _capacity) {
+                _values.resize(_capacity);
+            }
             _weight = W1 + W2;
         }
 
