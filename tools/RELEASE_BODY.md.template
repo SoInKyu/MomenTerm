@@ -13,6 +13,10 @@
    - 새 버전이 올라오면 앱이 알아서 알려줍니다
    - 수동 확인: 메뉴 **MomenTerm → Check For Updates…**
 
+> **v0.9.0 ~ v0.9.5 사용자께 (중요)**
+> 해당 버전들은 codesign seal 결함으로 Sparkle 자동 업데이트가 ‘Update Error — extracting the archive’ 에서 실패합니다.
+> **이번 한 번만 수동 드래그로 교체**해 주세요 (위 1–2단계). 0.9.6 부터 자동 업데이트가 정상 동작합니다.
+
 > 안 열릴 때 (Gatekeeper가 강하게 차단할 때):
 > ```bash
 > xattr -dr com.apple.quarantine /Applications/MomenTerm.app

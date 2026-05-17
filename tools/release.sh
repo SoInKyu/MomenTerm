@@ -214,7 +214,65 @@ if [ "$GOT_KEY" != "$EXPECT_KEY" ] \
   exit 1
 fi
 
-ditto -c -k --keepParent "$APP_FINAL" "$ZIP"
+# Re-seal the bundle with an ad-hoc signature BEFORE zipping. Reason:
+# the plist swap + executable rename + CFBundleVersion stamp above all
+# invalidate whatever code seal Xcode produced during archive, leaving
+# Contents/_CodeSignature/CodeResources stale-or-missing. The bundle still
+# runs (ad-hoc Mach-O signatures are loose at launchd-level), but Sparkle's
+# sandboxed installer XPC verifies codesign strictly after extraction and
+# refuses to swap in a bundle whose seal doesn't match its contents —
+# surfaced to the user as "An error occurred while extracting the archive."
+# v0.9.0..v0.9.5 all shipped with this defect; every Sparkle silent-install
+# attempt failed quietly. `--force --deep` re-seals the main bundle *and*
+# every nested bundle (Frameworks/*.framework, XPCServices/*.xpc, the
+# helper iTerm2ImportStatus.app, Sparkle's own .framework). Without --deep
+# only the outer bundle gets a valid seal and nested ones still trip
+# codesign --verify --deep.
+echo "[release] re-signing bundle ad-hoc (force --deep)..."
+codesign --force --deep --sign - "$APP_FINAL"
+
+# Verify the re-seal locally before paying the cost of zipping. Same
+# command Sparkle's installer XPC effectively runs; if this fails, no point
+# uploading.
+if ! codesign --verify --verbose=2 "$APP_FINAL" 2>&1 | grep -q "satisfies its Designated Requirement"; then
+  echo "error: codesign verification failed on $APP_FINAL after re-seal — aborting before zip." >&2
+  codesign --verify --verbose=2 "$APP_FINAL" >&2 || true
+  exit 1
+fi
+
+# --sequesterRsrc is critical. Without it, ditto on an HFS+/APFS source
+# tree writes AppleDouble (`._*`) sidecar files alongside every entry with
+# extended attributes. The resulting zip carries ~1100 phantom files inside
+# the bundle (e.g. Contents/MacOS/._iterm2-keeper-adapter). Finder's
+# Archive Utility silently strips them on first-install drag, masking the
+# damage — but Sparkle preserves every entry on extract, polluting the new
+# bundle with sidecars that violate the just-applied codesign seal. With
+# --sequesterRsrc, ditto packs the metadata into a single __MACOSX/ branch
+# that gets discarded on re-extract, leaving the bundle byte-identical to
+# the source.
+ditto -c -k --sequesterRsrc --keepParent "$APP_FINAL" "$ZIP"
+
+# Final gate: round-trip the zip through ditto -x and re-verify codesign
+# on the extracted bundle. This is exactly the path Sparkle's installer
+# takes; if this passes, Sparkle silent-install will pass too. Hardcoded
+# checks since the cost of catching a regression here is far lower than
+# shipping another broken auto-update cycle.
+echo "[release] verifying zip round-trips with codesign intact..."
+RTROUNDTRIP_DIR="$(mktemp -d)"
+trap 'rm -rf "$RTROUNDTRIP_DIR"' EXIT
+ditto -x -k "$ZIP" "$RTROUNDTRIP_DIR"
+if ! codesign --verify --verbose=2 "$RTROUNDTRIP_DIR/$APP_NAME.app" 2>&1 | grep -q "satisfies its Designated Requirement"; then
+  echo "error: codesign verification failed AFTER zip round-trip — Sparkle will reject this update." >&2
+  codesign --verify --verbose=2 "$RTROUNDTRIP_DIR/$APP_NAME.app" >&2 || true
+  exit 1
+fi
+APPLE_DOUBLE_COUNT=$(find "$RTROUNDTRIP_DIR" -name "._*" 2>/dev/null | wc -l | tr -d ' ')
+if [ "$APPLE_DOUBLE_COUNT" != "0" ]; then
+  echo "error: $APPLE_DOUBLE_COUNT AppleDouble sidecars survived extraction — ditto needs --sequesterRsrc." >&2
+  exit 1
+fi
+rm -rf "$RTROUNDTRIP_DIR"
+trap - EXIT
 
 ZIP_LENGTH=$(stat -f%z "$ZIP")
 
