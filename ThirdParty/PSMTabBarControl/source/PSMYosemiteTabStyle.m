@@ -15,6 +15,8 @@
 #import "PSMRolloverButton.h"
 #import "PSMTabBarCell.h"
 #import "PSMTabBarControl.h"
+#import "PTYTab.h"
+#import "iTerm2SharedARC-Swift.h"
 #import <objc/runtime.h>
 #import "SFSymbolEnum/SFSymbolEnum.h"
 
@@ -808,6 +810,80 @@
                                                   isLast:cell == _tabBar.cells.lastObject
                                          highlightAmount:highlightAmount];
     [self drawInteriorWithTabCell:cell inView:[cell controlView] highlightAmount:highlightAmount];
+    // MomenTerm: per-tab attention strip — drawn LAST so it sits on top of
+    // both background and interior. The helper inspects the represented
+    // PTYTab and schedules its own next-frame redraw, so the sweep stays
+    // animated for as long as the attention flag is set — no external timer.
+    [self momentermDrawAttentionStripIfNeededForCell:cell];
+}
+
+#pragma mark - MomenTerm
+
+// Renders a neon-cyan sweep strip across the bottom edge of `cell` iff its
+// PTYTab has any session with momentermNeedsAttention=YES. Sweep phase is a
+// function of CACurrentMediaTime (1.6s period — same cadence as
+// MomentermAttentionBarView.startSweepAnimation, so the per-split strip and
+// the per-tab strip stay visually in sync). Next-frame redraw is scheduled
+// here rather than via a separate NSTimer; it self-stops as soon as the
+// attention flag clears (the early-return branch fires and no further
+// dispatch is queued).
+- (void)momentermDrawAttentionStripIfNeededForCell:(PSMTabBarCell *)cell {
+    id repr = [cell representedObject];
+    if (![repr isKindOfClass:[NSTabViewItem class]]) {
+        return;
+    }
+    id identifier = [(NSTabViewItem *)repr identifier];
+    if (![identifier respondsToSelector:@selector(momentermAnySessionNeedsAttention)]) {
+        return;
+    }
+    if (![(PTYTab *)identifier momentermAnySessionNeedsAttention]) {
+        return;
+    }
+
+    const CGFloat stripHeight = 2.0;
+    const NSRect cellFrame = cell.frame;
+    const NSRect strip = NSMakeRect(NSMinX(cellFrame),
+                                    NSMaxY(cellFrame) - stripHeight,
+                                    NSWidth(cellFrame),
+                                    stripHeight);
+
+    // Sweep: a fixed-width neon highlight that travels from off-strip-left to
+    // off-strip-right on a 1.6s loop. We deliberately use the auto-distributed
+    // `-[NSGradient initWithColors:]` variant (no explicit locations) instead
+    // of `initWithColorsAndLocations:` — the latter throws an NSException at
+    // phase extremes when every clamped location collapses to the same end
+    // value, and SIGTRAPs the process. Clipping to the strip rect handles the
+    // off-strip portion of the highlight cleanly.
+    const NSTimeInterval t = CACurrentMediaTime();
+    const CGFloat phase = fmod(t, 1.6) / 1.6;       // 0..1
+    const CGFloat highlightWidth = 120.0;
+    const CGFloat travel = NSWidth(strip) + 2 * highlightWidth;
+    const CGFloat centerX = NSMinX(strip) - highlightWidth + travel * phase;
+    const NSRect highlightRect = NSMakeRect(centerX - highlightWidth / 2.0,
+                                            strip.origin.y,
+                                            highlightWidth,
+                                            strip.size.height);
+
+    if (!NSIsEmptyRect(NSIntersectionRect(highlightRect, strip))) {
+        NSColor *neon = [MomentermAttentionBarView momentermAttentionHighlightColor];
+        NSGraphicsContext *ctx = [NSGraphicsContext currentContext];
+        [ctx saveGraphicsState];
+        [[NSBezierPath bezierPathWithRect:strip] addClip];
+        NSGradient *g = [[NSGradient alloc] initWithColors:@[
+            [NSColor clearColor],
+            [neon colorWithAlphaComponent:0.85],
+            [NSColor clearColor]
+        ]];
+        [g drawInRect:highlightRect angle:0];
+        [ctx restoreGraphicsState];
+    }
+
+    __weak NSView *control = [cell controlView];
+    const NSRect dirty = strip;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.05 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        [control setNeedsDisplayInRect:dirty];
+    });
 }
 
 - (CGFloat)tabColorBrightness:(PSMTabBarCell *)cell {

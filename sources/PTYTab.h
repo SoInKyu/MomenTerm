@@ -66,6 +66,10 @@ extern NSString *const PTYTabArrangementOptionsPendingJumps;
 @property(nonatomic, retain) NSImage *icon;
 // Aggregated tab status from all sessions (highest-priority wins)
 @property(nonatomic, readonly) iTermSessionTabStatus *aggregatedTabStatus;
+// MomenTerm: YES iff any session in this tab has momentermNeedsAttention=YES
+// (i.e. its idle screen tail matched a Claude/CLI wait-for-input pattern).
+// Drives the per-tab neon strip drawn at the bottom of PSMTabBarCell.
+@property(nonatomic, readonly) BOOL momentermAnySessionNeedsAttention;
 @property(nonatomic, readonly) VT100ScreenProgress progress;
 
 // Size we should report to fit the current layout

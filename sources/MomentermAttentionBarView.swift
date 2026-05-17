@@ -38,6 +38,13 @@ final class MomentermAttentionBarView: NSView {
 
     override var isFlipped: Bool { true }
 
+    /// Neon-cyan highlight color shared by the per-split strip drawn here and
+    /// the per-tab strip drawn by PSMYosemiteTabStyle, so a single hue change
+    /// propagates to both surfaces.
+    @objc static var momentermAttentionHighlightColor: NSColor {
+        return NSColor(srgbRed: 0, green: 1, blue: 1, alpha: 1)
+    }
+
     private func configureGradient() {
         let g = gradientLayer
         g.startPoint = NSPoint(x: 0, y: 0.5)
@@ -45,28 +52,44 @@ final class MomentermAttentionBarView: NSView {
         // 5-stop gradient so the sweep has both a fade-in and a fade-out edge.
         // Colors stay constant; `locations` is what we animate to push the
         // bright stops from off-screen-left to off-screen-right.
+        let neon = MomentermAttentionBarView.momentermAttentionHighlightColor
         g.colors = [
             NSColor.clear.cgColor,
-            NSColor.systemBlue.withAlphaComponent(0.18).cgColor,
-            NSColor.systemBlue.withAlphaComponent(0.85).cgColor,
-            NSColor.systemBlue.withAlphaComponent(0.18).cgColor,
+            neon.withAlphaComponent(0.18).cgColor,
+            neon.withAlphaComponent(0.85).cgColor,
+            neon.withAlphaComponent(0.18).cgColor,
             NSColor.clear.cgColor,
         ]
         g.locations = [0.0, 0.2, 0.5, 0.8, 1.0]
     }
 
-    /// Drives the visible state. Calling with the same value twice is a
-    /// no-op so we never re-add the animation while it's already running.
+    /// Drives the visible state. Idempotent on the visibility axis (calling
+    /// with the same `active` twice does not retoggle `isHidden`) but every
+    /// `active == true` call verifies that the sweep animation is actually
+    /// attached. macOS drops CAAnimations on occluded windows, metal toggles
+    /// and layer regeneration, so without that re-check the strip stays
+    /// visible but frozen — the poller would happily report active=true on
+    /// every tick and the early-return would never recover the animation.
     @objc func setActive(_ active: Bool) {
-        if active == !isHidden {
-            return
-        }
         if active {
-            isHidden = false
-            startSweepAnimation()
-        } else {
+            if isHidden {
+                isHidden = false
+            }
+            if gradientLayer.animation(forKey: "sweep") == nil {
+                startSweepAnimation()
+            }
+        } else if !isHidden {
             gradientLayer.removeAnimation(forKey: "sweep")
             isHidden = true
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Re-attaching to a window can drop the layer's animation; restart
+        // it if we're still meant to be visible.
+        if !isHidden && gradientLayer.animation(forKey: "sweep") == nil {
+            startSweepAnimation()
         }
     }
 

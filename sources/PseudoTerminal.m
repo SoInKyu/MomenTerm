@@ -1476,6 +1476,11 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
             [strip setActive:needs];
         }
     }
+    // The per-tab attention strip is rendered by PSMYosemiteTabStyle from
+    // PTYTab.momentermAnySessionNeedsAttention. Mark the tab bar dirty so
+    // 0→1 / 1→0 transitions surface within one poll tick; while attention
+    // stays set, the style's own dispatch_after keeps the sweep animating.
+    [self.tabBarControl setNeedsDisplay:YES];
 }
 
 // Infers a frontend URL from the active session's terminal output and opens

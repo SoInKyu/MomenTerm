@@ -1260,6 +1260,15 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     return NO;
 }
 
+- (BOOL)momentermAnySessionNeedsAttention {
+    for (PTYSession *session in self.sessions) {
+        if (session.momentermNeedsAttention) {
+            return YES;
+        }
+    }
+    return NO;
+}
+
 - (BOOL)anySessionHasNewOutput:(BOOL *)okToNotify {
     *okToNotify = NO;
     BOOL result = NO;
