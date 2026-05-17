@@ -50,6 +50,7 @@
 @class iTermSearchResultsMinimapView;
 @class PTYSession;
 @class iTermSessionNoteModel;
+@class MomentermAttentionBarView;
 @class SplitSelectionView;
 @class SessionTitleView;
 @class WKWebViewConfiguration;
@@ -232,6 +233,13 @@ typedef NS_ENUM(NSUInteger, iTermSessionViewFindDriver) {
 @property (nonatomic) CGFloat progressBarHeight;
 @property (nonatomic, copy, nullable) NSString *progressBarColorScheme;
 @property (nonatomic, readonly, nullable) SessionTitleView *title;
+
+// MomenTerm: per-pane attention strip pinned to this pane's top edge.
+// Visibility is driven by PseudoTerminal's poller — see PTYSession's
+// momentermNeedsAttention / momentermLastOutputAt and
+// MomentermClaudePromptDetector.
+@property (nonatomic, readonly, nullable) MomentermAttentionBarView *momentermAttentionBar;
+
 @property (nonatomic) NSSize savedSize;
 
 - (void)setBrowserViewController:(iTermBrowserViewController *)browserViewController

@@ -454,7 +454,6 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
     // MomenTerm: full-width bottom strip with inline-panel toggle buttons
     MomentermBottomStripView *_momentermBottomStripView;
-    MomentermAttentionBarView *_momentermAttentionBar;
     NSTimer *_momentermAttentionTimer;
 
     // MomenTerm: floating windows that host the inline panels when detached
@@ -784,21 +783,11 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     _contentView.momentermFileEditorPanelContainer = _momentermFileEditorVC.view;
     _contentView.shouldShowMomentermFileEditorPanel = NO;
 
-    // MomenTerm: 3px attention bar pinned to the top of the window that
-    // sweeps a left → right gradient whenever a non-foreground tab in this
-    // window receives output (`PTYSession.newOutput`). Polled on a 1 Hz
-    // cadence; iTerm2 already maintains newOutput per session so we just
-    // need to OR them together and skip the active tab.
-    const CGFloat attentionH = 3;
-    _momentermAttentionBar = [[MomentermAttentionBarView alloc]
-        initWithFrame:NSMakeRect(0,
-                                 NSHeight(_contentView.bounds) - attentionH,
-                                 NSWidth(_contentView.bounds),
-                                 attentionH)];
-    _momentermAttentionBar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
-    [_contentView addSubview:_momentermAttentionBar
-                  positioned:NSWindowAbove
-                  relativeTo:nil];
+    // MomenTerm: 1 Hz poller that decides — per session — whether the
+    // per-pane attention strip (owned by each SessionView) should light up
+    // because that session is waiting on user input. The strip views
+    // themselves live with their SessionView; see
+    // -it_pollMomentermAttention: below for the trigger logic.
     _momentermAttentionTimer =
         [[NSTimer scheduledTimerWithTimeInterval:1.0
                                           target:self
@@ -1456,31 +1445,37 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [_momentermSidebarVC launchClaudeForCurrentSelection];
 }
 
-// 1 Hz tick — flips the attention bar on whenever any non-active tab has
-// a session sitting on `newOutput`, off otherwise. iTerm2 clears newOutput
-// on the foreground session when it becomes selected (PTYSession.m:7042
-// + PTYTab.m:6664) so we don't need to clear anything manually.
+// 1 Hz tick — for each session in this window, lights the per-pane attention
+// strip when (a) the PTY has been quiet for at least kMomentermIdleThreshold
+// AND (b) the recent screen tail matches a known "waiting for user input" UI
+// token (Claude `(y/N)`, numbered menu, `❯ 1.` selector, …). The AND keeps
+// the strip silent during streaming output and during plain shell idle.
+// `momentermLastOutputAt` is rewound to `now` on every PTY read in
+// PTYSession.m's screenExecutorDidUpdate: hook, and `momentermNeedsAttention`
+// is also cleared eagerly on any user keystroke (writeTaskNoBroadcast:…).
 - (void)it_pollMomentermAttention:(NSTimer *)timer {
-    if (!_momentermAttentionBar) {
-        return;
-    }
-    BOOL anyBackgroundUnread = NO;
-    PTYTab *current = [self currentTab];
+    static const NSTimeInterval kMomentermIdleThreshold = 0.8;
+    static const NSInteger kMomentermTailLines = 5;
+    const NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     for (PTYTab *tab in [self tabs]) {
-        if (tab == current) {
-            continue;
-        }
         for (PTYSession *session in [tab sessions]) {
-            if (session.newOutput) {
-                anyBackgroundUnread = YES;
-                break;
+            MomentermAttentionBarView *strip = session.view.momentermAttentionBar;
+            if (!strip) {
+                continue;
             }
-        }
-        if (anyBackgroundUnread) {
-            break;
+            BOOL needs = NO;
+            if (session.momentermLastOutputAt > 0 &&
+                (now - session.momentermLastOutputAt) >= kMomentermIdleThreshold) {
+                NSString *tail = [session momentermScreenTailString:kMomentermTailLines];
+                if (tail.length > 0 &&
+                    [MomentermClaudePromptDetector isWaitingForUserResponseWithTail:tail]) {
+                    needs = YES;
+                }
+            }
+            session.momentermNeedsAttention = needs;
+            [strip setActive:needs];
         }
     }
-    [_momentermAttentionBar setActive:anyBackgroundUnread];
 }
 
 // Infers a frontend URL from the active session's terminal output and opens
@@ -1944,7 +1939,6 @@ ITERM_WEAKLY_REFERENCEABLE
     [_momentermSidebarVC release];
     [_momentermAttentionTimer invalidate];
     [_momentermAttentionTimer release];
-    [_momentermAttentionBar release];
     [_momentermToggleAccessory release];
     [_momentermFileTreeVC release];
     [_momentermFileTreePath release];

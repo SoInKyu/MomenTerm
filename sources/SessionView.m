@@ -168,6 +168,9 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     iTermActivePaneBorderView *_activePaneBorderView;
 
     iTermSessionNoteView *_sessionNoteView;
+
+    // MomenTerm: per-pane attention strip (see header).
+    MomentermAttentionBarView *_momentermAttentionBar;
 }
 
 + (double)titleHeight {
@@ -244,6 +247,14 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
         // assign the main view
         [self addSubviewBelowFindView:_scrollview];
+
+        // MomenTerm: thin "waiting for user input" strip flush against the
+        // scrollview's top edge (one per split; PseudoTerminal's poller
+        // toggles its setActive: based on session.momentermNeedsAttention).
+        // Allocation + attach now lives inside -updateMomentermAttentionFrame,
+        // so paths that bypass this init also pick the strip up on first
+        // -setFrameSize:.
+        [self updateMomentermAttentionFrame];
 
         if ([iTermAdvancedSettingsModel showLocationsInScrollbar]) {
             _searchResultsMinimap = [[iTermSearchResultsMinimapView alloc] init];
@@ -1595,6 +1606,7 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
                                           [findView frame].size.height)];
     }
     [self updateFindViewFrame];
+    [self updateMomentermAttentionFrame];
 }
 
 + (NSDate *)lastResizeDate {
@@ -1873,6 +1885,10 @@ typedef NS_ENUM(NSInteger, SessionViewTrackingMode) {
         return NO;
     }
     _showTitle = value;
+    // MomenTerm: title-bar visibility changes the strip's anchor row, and
+    // autoresizingMask alone won't catch it (the change is internal layout,
+    // not a SessionView frame delta).
+    [self updateMomentermAttentionFrame];
     PTYScrollView *scrollView = [self scrollview];
     NSRect frame = [scrollView frame];
     if (_showTitle) {
@@ -2519,6 +2535,32 @@ typedef NS_OPTIONS(NSUInteger, iTermCornerFlags) {
         rect.origin.y -= iTermGetSessionViewTitleHeight();
     }
     _currentAnnouncement.view.frame = rect;
+}
+
+// MomenTerm: positions the attention strip flush against the *actual* top
+// edge of the terminal-content area, anchored on the scrollview's frame
+// rather than on a guessed (frame - titleHeight) offset. This:
+//   1. removes the cosmetic gap the title-height guess left behind, and
+//   2. lazily creates the strip if it hasn't been attached yet — covers
+//      SessionView code paths (state restoration, drag-reparenting) that
+//      may not pass through the standard initWithFrame: branch.
+// Called from initWithFrame:, setShowTitle:adjustScrollView:, and
+// setFrameSize: — i.e. every entry point that can shift _scrollview's frame.
+- (void)updateMomentermAttentionFrame {
+    if (!_scrollview) {
+        return;
+    }
+    if (!_momentermAttentionBar) {
+        _momentermAttentionBar = [[MomentermAttentionBarView alloc] initWithFrame:NSZeroRect];
+        _momentermAttentionBar.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+        [self addSubviewBelowFindView:_momentermAttentionBar];
+    }
+    const CGFloat stripHeight = 2.0;
+    const NSRect scrollFrame = _scrollview.frame;
+    _momentermAttentionBar.frame = NSMakeRect(NSMinX(scrollFrame),
+                                              NSMaxY(scrollFrame) - stripHeight,
+                                              NSWidth(scrollFrame),
+                                              stripHeight);
 }
 
 - (iTermAnnouncementViewController *)nextAnnouncement {

@@ -394,6 +394,15 @@ backgroundColor:(NSColor *)backgroundColor;
 // than tab colors.
 @property(nonatomic, assign) BOOL havePostedNewOutputNotification;
 
+// MomenTerm: per-session attention bar state. The 1Hz poller in PseudoTerminal
+// reads `momentermLastOutputAt` (reference-date seconds, set when this session
+// receives PTY output) together with the screen tail to decide whether the
+// per-pane strip should be active, and writes the verdict into
+// `momentermNeedsAttention`. A user keystroke clears the flag eagerly.
+@property(nonatomic) BOOL momentermNeedsAttention;
+@property(nonatomic) NSTimeInterval momentermLastOutputAt;
+- (NSString *)momentermScreenTailString:(NSInteger)numberOfLines;
+
 @property(nonatomic, readonly) iTermSessionNameController *nameController;
 
 // Returns the presentationName from the nameController. This is only here because

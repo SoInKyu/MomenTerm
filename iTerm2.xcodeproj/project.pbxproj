@@ -22,6 +22,7 @@
 		10D567B3DD4E3FB05673BF65 /* iTermAnnotatedScreenshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7C74C12959E7040AF3A3B12F /* iTermAnnotatedScreenshot.swift */; };
 		13DE2BC708456198F83264EC /* Underline.metal in Sources */ = {isa = PBXBuildFile; fileRef = F287FABDFD3BECB9DCD3181D /* Underline.metal */; };
 		144DC651FBD55CD3407DB29C /* decdwl_decdhl_normalized.txt in Resources */ = {isa = PBXBuildFile; fileRef = 148411BF36E0AD043E6CA1CD /* decdwl_decdhl_normalized.txt */; };
+		158EA5A48C0FF0E3803EE553 /* MomentermClaudePromptDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF242966DFFE5BD86FC9681A /* MomentermClaudePromptDetector.swift */; };
 		17A0546EB4A462E2840ABB44 /* MomentermSessionRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0AB973E5C09DBEB81A0AA1C /* MomentermSessionRegistry.swift */; };
 		1D027C111CD1867000B0FBFF /* iTermColorPresets.h in Headers */ = {isa = PBXBuildFile; fileRef = 1D027C0F1CD1867000B0FBFF /* iTermColorPresets.h */; };
 		1D0318281A42563A00932107 /* iTermImageWell.h in Headers */ = {isa = PBXBuildFile; fileRef = 1D0318261A42563A00932107 /* iTermImageWell.h */; };
@@ -9353,6 +9354,7 @@
 		DDF0FD63062916F70080EF74 /* iTermApplication.h */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.h; path = iTermApplication.h; sourceTree = "<group>"; tabWidth = 4; };
 		DDF0FD64062916F70080EF74 /* iTermApplication.m */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.objc; lineEnding = 0; path = iTermApplication.m; sourceTree = "<group>"; tabWidth = 4; xcLanguageSpecificationIdentifier = xcode.lang.objc; };
 		DE7B0AE10E1598EDE1E01795 /* iTermEventTriggerParameterView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermEventTriggerParameterView.swift; sourceTree = "<group>"; };
+		DF242966DFFE5BD86FC9681A /* MomentermClaudePromptDetector.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermClaudePromptDetector.swift; sourceTree = "<group>"; };
 		E1DCDB86FBBA5C3B72776075 /* MomentermMarkdownTemplate.html */ = {isa = PBXFileReference; includeInIndex = 1; path = MomentermMarkdownTemplate.html; sourceTree = "<group>"; };
 		E4831413647FBBB9AA02FEDB /* MomentermFileTreeVC.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermFileTreeVC.swift; sourceTree = "<group>"; };
 		E516C7A7310B0D8FDB6C95ED /* MomentermTitlebarAccessoryVC.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermTitlebarAccessoryVC.swift; sourceTree = "<group>"; };
@@ -9769,6 +9771,7 @@
 				2F806287655F9A99FF805BFD /* MomentermProjectRestorer.swift */,
 				E516C7A7310B0D8FDB6C95ED /* MomentermTitlebarAccessoryVC.swift */,
 				1D48A6556960C73A8046CD57 /* MomentermAttentionBarView.swift */,
+				DF242966DFFE5BD86FC9681A /* MomentermClaudePromptDetector.swift */,
 			);
 			name = Classes;
 			path = sources/;
@@ -20553,6 +20556,7 @@
 				8D74189C5AE4352C5BE6FDEE /* MomentermProjectRestorer.swift in Sources */,
 				6ECF849F1EDC063566C3730E /* MomentermTitlebarAccessoryVC.swift in Sources */,
 				9811AA6A1FA700B7FBAB4A92 /* MomentermAttentionBarView.swift in Sources */,
+				158EA5A48C0FF0E3803EE553 /* MomentermClaudePromptDetector.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

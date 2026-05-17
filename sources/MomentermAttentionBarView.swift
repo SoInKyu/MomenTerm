@@ -2,13 +2,14 @@
 //  MomentermAttentionBarView.swift
 //  iTerm2
 //
-//  Thin gradient strip pinned to the top edge of the terminal content area.
-//  PseudoTerminal flips `setActive(_:)` to YES when a non-foreground tab in
-//  the window receives new output (`PTYSession.newOutput`) so the user can
-//  spot at a glance that another tab is waiting on them — typically a
-//  Claude prompt asking for confirmation. While active, a soft left → right
-//  sweep continuously animates across the strip; flipping back to NO stops
-//  the animation and hides the view.
+//  Thin gradient strip pinned to the top edge of an individual split pane
+//  (each SessionView owns one). PseudoTerminal's 1 Hz poller flips
+//  `setActive(_:)` to YES on the strip belonging to a session that looks
+//  like it's waiting for the user — specifically, output has been quiet
+//  long enough AND the recent screen tail matches a known prompt UI
+//  (typically Claude Code's `(y/N)`, numbered menu, or arrow selector).
+//  While active, a soft left → right sweep continuously animates across
+//  the strip; flipping back to NO stops the animation and hides the view.
 //
 
 import AppKit

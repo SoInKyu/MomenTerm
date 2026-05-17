@@ -3758,6 +3758,10 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
                     encoding:(NSStringEncoding)encoding
                forceEncoding:(BOOL)forceEncoding
                    reporting:(BOOL)reporting {
+    // MomenTerm: any user-initiated write means the user just responded — drop
+    // the attention flag immediately so the strip vanishes before the next
+    // poll tick instead of lingering for up to a second.
+    _momentermNeedsAttention = NO;
     if (_conductor.handlesKeystrokes) {
         [_conductor sendKeys:[string dataUsingEncoding:encoding]];
         return;
@@ -17860,6 +17864,11 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
         // jiggle but we shouldn't count that as activity.
         if (self.shell.winSizeController.timeSinceLastJiggle > 0.25) {
             _newOutput = YES;
+            // MomenTerm: any fresh output rewinds the idle clock and forces the
+            // attention strip off — we only re-arm it when the poller observes
+            // a quiet tail that matches a known wait-for-input UI.
+            _momentermLastOutputAt = [NSDate timeIntervalSinceReferenceDate];
+            _momentermNeedsAttention = NO;
             if (_eventTriggerEvaluator.hasIdleTrigger || _eventTriggerEvaluator.hasActivityAfterIdleTrigger) {
                 [_eventTriggerEvaluator outputReceived];
             }
@@ -17874,6 +17883,39 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     }
 
     [_cadenceController didHandleInputWithThroughput:_estimatedThroughput];
+}
+
+#pragma mark - MomenTerm attention bar
+
+// Returns the last `numberOfLines` lines of the (visible screen + scrollback)
+// as a single plain string, used by the per-pane attention bar to match
+// against known "waiting for user input" UI tokens (Claude `(y/N)`, numbered
+// menus, `❯ 1.` selectors, …). The cap on `cappedAtSize` is generous because
+// a typical Claude menu is well under 1 KB; the floor avoids surprising the
+// regex matcher with a single 100 KB line.
+- (NSString *)momentermScreenTailString:(NSInteger)numberOfLines {
+    if (numberOfLines <= 0 || _screen.width <= 0 || _screen.numberOfLines <= 0) {
+        return @"";
+    }
+    iTermTextExtractor *extractor = [iTermTextExtractor textExtractorWithDataSource:_screen];
+    const int totalLines = _screen.numberOfLines;
+    const int startY = MAX(0, totalLines - (int)numberOfLines);
+    const int endY = totalLines - 1;
+    VT100GridWindowedRange range = VT100GridWindowedRangeMake(
+        VT100GridCoordRangeMake(0, startY, _screen.width, endY),
+        0, 0);
+    id result = [extractor contentInRange:range
+                        attributeProvider:nil
+                               nullPolicy:kiTermTextExtractorNullPolicyTreatAsSpace
+                                      pad:NO
+                       includeLastNewline:YES
+                   trimTrailingWhitespace:YES
+                             cappedAtSize:8 * 1024
+                             truncateTail:NO
+                        continuationChars:nil
+                                   coords:nil
+                        deduplicateDECDHL:NO];
+    return [result isKindOfClass:[NSString class]] ? result : @"";
 }
 
 - (void)screenConvertAbsoluteRange:(VT100GridAbsCoordRange)range
