@@ -31,11 +31,17 @@ final class MomentermClaudePromptDetector: NSObject {
             #"\(\s*[yY]\s*/\s*[nN]\s*\)"#,
             #"\[\s*[yY]\s*/\s*[nN]\s*\]"#,
             #"Do you want to"#,
+            #"Would\s+you\s+like\s+to"#,
             #"❯\s*\d+\."#,
             #"Press\s+\w+\s+to\s+continue"#,
             #"Enter\s+to\s+select"#,
             #"Esc\s+to\s+cancel"#,
             #"↑/↓\s+to\s+navigate"#,
+            // Claude Code plan mode footer + header — distinct from the
+            // regular arrow-selector footer above.
+            #"shift\s*\+\s*tab\s+to\s+approve"#,
+            #"ctrl[\s\-]*g\s+to\s+edit\s+in\s+VS\s+Code"#,
+            #"Claude\s+has\s+written\s+up\s+a\s+plan"#,
         ]
         return raw.compactMap { try? NSRegularExpression(pattern: $0, options: []) }
     }()
@@ -46,7 +52,9 @@ final class MomentermClaudePromptDetector: NSObject {
     // because Claude Code uses the dot form while many other CLIs use the
     // paren form.
     private static let numberedMenuLine: NSRegularExpression? = {
-        return try? NSRegularExpression(pattern: #"^\s*\d+[).]\s"#,
+        // Accept an optional selection-cursor prefix (`> 1.` / `❯ 1.`) so the
+        // currently-highlighted entry is counted along with the rest.
+        return try? NSRegularExpression(pattern: #"^\s*[>❯]?\s*\d+[).]\s"#,
                                         options: [.anchorsMatchLines])
     }()
 

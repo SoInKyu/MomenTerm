@@ -199,6 +199,20 @@ static BOOL gForceSaveState;
 // windows have already been closed.
 - (void)applicationWillTerminate:(NSNotification *)notification {
     DLog(@"application will terminate");
+    // Sparkle install-and-relaunch posts iTermApplicationWillTerminate via
+    // applicationShouldTerminate while _sparkleRestarting=YES is already set
+    // (sparkleWillRestartApp: in iTermApplicationDelegate.m). Running the
+    // synchronous telemetry/state aggregation in that final breath has been
+    // observed to surface as EXC_BREAKPOINT inside iTermHistogram::Sampler
+    // merge/concatenate paths (incident 4F38EA09, v0.9.10) — the new process
+    // is about to launch and will rebuild state from scratch, so the save is
+    // wasted work AND a trap surface. Skip it entirely in that case.
+    id appDelegate = [NSApp delegate];
+    if ([appDelegate respondsToSelector:@selector(sparkleRestarting)]
+        && [appDelegate performSelector:@selector(sparkleRestarting)]) {
+        DLog(@"Sparkle is restarting the app — skip state save.");
+        return;
+    }
     if (![iTermRestorableStateController stateRestorationEnabled]) {
         DLog(@"State restoration disabled. Erase state.");
         [_driver eraseSynchronously:YES];

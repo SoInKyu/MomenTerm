@@ -19,6 +19,8 @@ protocol MomentermBottomStripDelegate: AnyObject {
     @objc optional func momentermBottomStripDidTapVersion()
     @objc optional func momentermBottomStripDidTapSettings(from anchor: NSView)
     @objc optional func momentermBottomStripDidTapClaude()
+    @objc optional func momentermBottomStripDidTapCodex()
+    @objc optional func momentermBottomStripDidTapGemini()
 }
 
 @objc(MomentermBottomStripStatus)
@@ -97,6 +99,8 @@ final class MomentermBottomStripView: NSView {
     private let gearButton = NSButton()
     private let gearClaudeSeparator = NSBox()
     private let claudeButton = NSButton()
+    private let codexButton = NSButton()
+    private let geminiButton = NSButton()
     private let gitGraphIconButton = NSButton()
     private let showsToolButtons: Bool
     private let baseVersionText: String
@@ -199,6 +203,18 @@ final class MomentermBottomStripView: NSView {
         claudeButton.action = #selector(claudeIconTapped)
         addSubview(claudeButton)
 
+        configureAIToolButton(codexButton,
+                              assetName: "ai-codex",
+                              toolTip: "현재 세션에서 Codex 실행",
+                              selector: #selector(codexIconTapped))
+        addSubview(codexButton)
+
+        configureAIToolButton(geminiButton,
+                              assetName: "ai-gemini",
+                              toolTip: "현재 세션에서 Gemini 실행",
+                              selector: #selector(geminiIconTapped))
+        addSubview(geminiButton)
+
         gitGraphIconButton.isBordered = false
         gitGraphIconButton.imagePosition = .imageOnly
         gitGraphIconButton.imageScaling = .scaleProportionallyDown
@@ -207,6 +223,23 @@ final class MomentermBottomStripView: NSView {
         gitGraphIconButton.target = self
         gitGraphIconButton.action = #selector(graphTapped)
         addSubview(gitGraphIconButton)
+    }
+
+    private func configureAIToolButton(_ button: NSButton,
+                                       assetName: String,
+                                       toolTip: String,
+                                       selector: Selector) {
+        button.isBordered = false
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        if let original = NSImage(named: assetName),
+           let copy = original.copy() as? NSImage {
+            copy.size = NSSize(width: 14, height: 14)
+            button.image = copy
+        }
+        button.toolTip = toolTip
+        button.target = self
+        button.action = selector
     }
 
     private func configureSymbolIconButton(_ button: NSButton,
@@ -266,7 +299,7 @@ final class MomentermBottomStripView: NSView {
         versionButton.frame = NSRect(x: versionX, y: buttonY, width: versionW, height: buttonH)
 
         // Right-side icon group, packed from the right edge inward:
-        // [gear] | [claude] [git-branch]   ← right-anchored
+        // [gear] | [claude] [codex] [gemini] [git-branch]   ← right-anchored
         let iconSize: CGFloat = 22
         let iconGap: CGFloat = 4
         let rightMargin: CGFloat = 10
@@ -277,6 +310,10 @@ final class MomentermBottomStripView: NSView {
 
         var rx = w - rightMargin - iconSize
         gitGraphIconButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
+        rx -= iconSize + iconGap
+        geminiButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
+        rx -= iconSize + iconGap
+        codexButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
         rx -= iconSize + iconGap
         claudeButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
         rx -= sepW + iconGap
@@ -334,5 +371,11 @@ final class MomentermBottomStripView: NSView {
     }
     @objc private func claudeIconTapped() {
         delegate?.momentermBottomStripDidTapClaude?()
+    }
+    @objc private func codexIconTapped() {
+        delegate?.momentermBottomStripDidTapCodex?()
+    }
+    @objc private func geminiIconTapped() {
+        delegate?.momentermBottomStripDidTapGemini?()
     }
 }

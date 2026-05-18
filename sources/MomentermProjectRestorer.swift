@@ -315,11 +315,19 @@ import AppKit
         if let cmd = aiCommand, !cmd.isEmpty {
             profile[KEY_INITIAL_TEXT] = cmd
         }
+        let aiCmdSnapshot = aiCommand
         iTermSessionLauncher.launchBookmark(profile,
                                             in: nil,
                                             respectTabbingMode: false) { session in
             guard let guid = session.guid else { return }
             MomentermSessionRegistry.shared.register(sessionGuid: guid, projectId: project.id)
+            // Remember which AI command this session was launched with so
+            // splits of this pane can auto-run the same model. KEY_INITIAL_TEXT
+            // handles the *first* boot above; this captures the command for
+            // any subsequent inheritance.
+            if let cmd = aiCmdSnapshot, !cmd.isEmpty {
+                session.momentermInjectedCommand = cmd
+            }
         }
     }
 }

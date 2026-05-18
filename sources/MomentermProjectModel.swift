@@ -110,7 +110,13 @@ struct MomentermProject: Codable, Identifiable {
         self.id = try c.decode(String.self, forKey: .id)
         self.name = try c.decode(String.self, forKey: .name)
         self.path = try c.decode(String.self, forKey: .path)
-        self.aiTool = try c.decode(MomentermAITool.self, forKey: .aiTool)
+        // Silent migration: projects saved with .none from earlier builds
+        // open as empty terminals on double-click. Coerce to .claudeCode so
+        // the AI auto-launch path (aiLaunchCommand) returns a real command
+        // and the next save persists the upgraded value. Users who explicitly
+        // want no AI tool can change it back in the project settings UI.
+        let decodedAITool = try c.decode(MomentermAITool.self, forKey: .aiTool)
+        self.aiTool = (decodedAITool == .none) ? .claudeCode : decodedAITool
         self.tmuxMode = try c.decode(MomentermTmuxMode.self, forKey: .tmuxMode)
         self.tmuxSession = try c.decodeIfPresent(String.self, forKey: .tmuxSession)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)

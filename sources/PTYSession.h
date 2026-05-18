@@ -553,6 +553,14 @@ backgroundColor:(NSColor *)backgroundColor;
 @property(nonatomic, readonly) iTermSessionTabStatus *tabStatus;
 - (void)clearTabStatus;
 
+// MomenTerm: the AI launch command (e.g. "claude --dangerously-skip-permissions",
+// "codex", "gemini") that was injected into this session at launch or via the
+// bottom-strip Claude affordance. Used by split inheritance — when the user
+// splits a pane that's running an AI model, the new pane reads this value off
+// the parent and auto-writes it to PTY so the same model boots there too.
+// nil for project-less / shell-only sessions, in which case split does nothing.
+@property(nonatomic, copy, nullable) NSString *momentermInjectedCommand;
+
 // Commands issued, directories entered, and hosts connected to during this session.
 // Requires shell integration.
 @property(nonatomic, readonly) NSMutableArray<NSString *> *commands;  // of NSString

@@ -1445,6 +1445,14 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [_momentermSidebarVC launchClaudeForCurrentSelection];
 }
 
+- (void)momentermBottomStripDidTapCodex {
+    [_momentermSidebarVC launchAIToolForCurrentSelection:MomentermAIToolCodex];
+}
+
+- (void)momentermBottomStripDidTapGemini {
+    [_momentermSidebarVC launchAIToolForCurrentSelection:MomentermAIToolGemini];
+}
+
 // 1 Hz tick — for each session in this window, lights the per-pane attention
 // strip when (a) the PTY has been quiet for at least kMomentermIdleThreshold
 // AND (b) the recent screen tail matches a known "waiting for user input" UI
@@ -1455,7 +1463,10 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 // is also cleared eagerly on any user keystroke (writeTaskNoBroadcast:…).
 - (void)it_pollMomentermAttention:(NSTimer *)timer {
     static const NSTimeInterval kMomentermIdleThreshold = 0.8;
-    static const NSInteger kMomentermTailLines = 5;
+    // 12 lines covers Claude Code's plan-mode prompt (header + blank + 4 menu
+    // items + footer line + blank + `ctrl-g` line ≈ 9 lines) while staying
+    // well under the 8KB cap in PTYSession.m's -momentermScreenTailString:.
+    static const NSInteger kMomentermTailLines = 12;
     const NSTimeInterval now = [NSDate timeIntervalSinceReferenceDate];
     for (PTYTab *tab in [self tabs]) {
         for (PTYSession *session in [tab sessions]) {
@@ -1708,6 +1719,7 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
         profile = [profile dictionaryBySettingObject:aiCommand forKey:KEY_INITIAL_TEXT];
     }
     __weak typeof(self) weakSelf = self;
+    NSString *aiCommandSnapshot = [aiCommand copy];
     void (^registerSession)(PTYSession *) = ^(PTYSession *session) {
         if (session && projectId.length > 0 && session.guid.length > 0) {
             [[MomentermSessionRegistry shared] registerWithSessionGuid:session.guid
@@ -1715,6 +1727,11 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
             // Now that the registry knows about this session, refresh the highlight
             // so the user sees the newly-opened project marked as active right away.
             [weakSelf it_syncMomentermSidebarToActiveSession];
+        }
+        // Remember what AI command this session was launched with so split
+        // inheritance can auto-boot the same model in new panes.
+        if (session && aiCommandSnapshot.length > 0) {
+            session.momentermInjectedCommand = aiCommandSnapshot;
         }
     };
     if (inNewTab) {
@@ -1815,6 +1832,10 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [[MomentermSessionRegistry shared] touchWithSessionGuid:guid];
     if (command.length > 0) {
         NSString *toWrite = [command hasSuffix:@"\n"] ? command : [command stringByAppendingString:@"\n"];
+        // Track the most recent AI command for split inheritance — overwrites
+        // any earlier value so e.g. switching from claude → codex via the
+        // affordance updates what new splits will auto-run.
+        target.momentermInjectedCommand = command;
         [target writeTask:toWrite];
     }
     return YES;
@@ -10167,6 +10188,30 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     if (performSetup) {
         // Adding a newly created session into a new split
         [self setupSession:newSession withSize:&size];
+        // MomenTerm: inherit the parent split's AI command (claude / codex /
+        // gemini / localLLM) into the brand-new pane so the user gets the
+        // same model auto-running. PTY needs a moment for fork+shell init
+        // before writeTask is meaningful — defer with dispatch_after.
+        NSString *parentInjectedCommand = targetSession.momentermInjectedCommand;
+        if (parentInjectedCommand.length > 0) {
+            newSession.momentermInjectedCommand = parentInjectedCommand;
+            NSString *parentProjectId = nil;
+            if (targetSession.guid.length > 0) {
+                parentProjectId = [[MomentermSessionRegistry shared] projectIdForSessionGuid:targetSession.guid];
+            }
+            if (parentProjectId.length > 0 && newSession.guid.length > 0) {
+                [[MomentermSessionRegistry shared] registerWithSessionGuid:newSession.guid
+                                                                  projectId:parentProjectId];
+            }
+            NSString *toWrite = [parentInjectedCommand hasSuffix:@"\n"]
+                ? parentInjectedCommand
+                : [parentInjectedCommand stringByAppendingString:@"\n"];
+            __weak typeof(newSession) weakNewSession = newSession;
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.3 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                [weakNewSession writeTask:toWrite];
+            });
+        }
     } else {
         // Moving an existing session (newSession) into a new split
         [newSession setScrollViewDocumentView];

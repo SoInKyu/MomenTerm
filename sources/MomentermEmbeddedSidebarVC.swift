@@ -887,22 +887,99 @@ private struct DropTarget {
     /// new tab is opened seeded with the same command. Used by the
     /// bottom-strip Claude affordance.
     @objc func launchClaudeForCurrentSelection() {
+        // Priority 1 — currently focused split of the key terminal window.
+        // The previous flow routed through MomentermSessionRegistry's
+        // latestSessionGuid(forProjectId:) which uses a touched-timestamp
+        // heuristic and can lag behind macOS firstResponder when the user
+        // rapidly clicks between splits. keyWindow → currentTerminal →
+        // currentSession is the authoritative answer for "which pane is
+        // selected right now", so target it directly.
+        if let term = iTermController.sharedInstance()?.currentTerminal,
+           let session = term.currentSession() {
+            let command = resolveClaudeCommand()
+            session.momentermInjectedCommand = command
+            let toWrite = command.hasSuffix("\n") ? command : command + "\n"
+            session.writeTask(toWrite)
+            return
+        }
+        // Priority 2 (fallback) — no live terminal at all (Welcome window
+        // only). Open a new tab with the sidebar-selected project.
         guard let resolved = resolveClaudeTarget() else { return }
         let project = resolved.project
         let space = resolved.space
-        let command = project.aiLaunchCommand ?? ""
-
-        if !command.isEmpty,
-           sidebarDelegate?.sidebarDidRequestRunInExistingSession?(projectId: project.id,
-                                                                  command: command) == true {
-            return
-        }
         sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
                                                      spaceName: space.name,
                                                      projectName: project.name,
                                                      projectId: project.id,
                                                      inNewTab: true,
                                                      aiCommand: project.aiLaunchCommand)
+    }
+
+    /// Picks the command string the ✨ Claude affordance should inject.
+    /// Prefers the active project's configured AI tool; falls back to bare
+    /// claude when no project is bound (so the affordance still works in
+    /// arbitrary shell sessions).
+    private func resolveClaudeCommand() -> String {
+        if let activeId = activeProjectId {
+            for space in store.spaces {
+                if let p = space.projects.first(where: { $0.id == activeId }),
+                   let cmd = p.aiLaunchCommand, !cmd.isEmpty {
+                    return cmd
+                }
+            }
+        }
+        return "claude --dangerously-skip-permissions"
+    }
+
+    /// Tool-aware launch path used by the bottom-strip Codex and Gemini
+    /// affordances (Claude keeps its own path above for backward compat).
+    /// Difference vs `launchClaudeForCurrentSelection`: the command lookup
+    /// filters by `p.aiTool == tool`, so the icon stays labelling-honest —
+    /// clicking Codex on a Claude-configured project still injects "codex",
+    /// not the project's claude command. Fallback (no live terminal) opens
+    /// the active project's new tab seeded with the tool's literal command.
+    @objc func launchAIToolForCurrentSelection(_ tool: MomentermAITool) {
+        if let term = iTermController.sharedInstance()?.currentTerminal,
+           let session = term.currentSession() {
+            let command = resolveCommand(for: tool)
+            guard !command.isEmpty else { return }
+            session.momentermInjectedCommand = command
+            let toWrite = command.hasSuffix("\n") ? command : command + "\n"
+            session.writeTask(toWrite)
+            return
+        }
+        guard let resolved = resolveClaudeTarget() else { return }
+        let project = resolved.project
+        let literal = commandLiteral(for: tool)
+        guard !literal.isEmpty else { return }
+        sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
+                                                     spaceName: resolved.space.name,
+                                                     projectName: project.name,
+                                                     projectId: project.id,
+                                                     inNewTab: true,
+                                                     aiCommand: literal)
+    }
+
+    private func resolveCommand(for tool: MomentermAITool) -> String {
+        if let activeId = activeProjectId {
+            for space in store.spaces {
+                if let p = space.projects.first(where: { $0.id == activeId }),
+                   p.aiTool == tool,
+                   let cmd = p.aiLaunchCommand, !cmd.isEmpty {
+                    return cmd
+                }
+            }
+        }
+        return commandLiteral(for: tool)
+    }
+
+    private func commandLiteral(for tool: MomentermAITool) -> String {
+        switch tool {
+        case .claudeCode: return "claude --dangerously-skip-permissions"
+        case .codex:      return "codex"
+        case .gemini:     return "gemini"
+        default:          return ""
+        }
     }
 
     /// Picks the project the Claude affordance should target. The currently
