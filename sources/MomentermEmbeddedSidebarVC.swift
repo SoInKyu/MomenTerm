@@ -798,14 +798,17 @@ private struct DropTarget {
         guard let item = item, case .project(let project, let space) = item else { return }
 
         // In welcome-window context there is no existing terminal to tab into,
-        // so skip the choice dialog and open directly.
+        // so skip the choice dialog and open directly. We still pass the
+        // project's AI command — the dialog suppression is about UX (no
+        // "new tab vs new window" question), NOT about skipping the
+        // auto-launch the user configured for this project.
         if suppressProjectOpenDialog {
             sidebarDelegate?.sidebarDidRequestOpenProject(path: project.path,
                                                          spaceName: space.name,
                                                          projectName: project.name,
                                                          projectId: project.id,
                                                          inNewTab: false,
-                                                         aiCommand: nil)
+                                                         aiCommand: project.aiLaunchCommand)
             return
         }
 

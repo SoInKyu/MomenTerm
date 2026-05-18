@@ -215,6 +215,14 @@ import AppKit
             if !projectId.isEmpty, let guid = session.guid {
                 MomentermSessionRegistry.shared.register(sessionGuid: guid, projectId: projectId)
             }
+            // Remember what AI command this session was launched with so
+            // splits of this pane (later, after Welcome → terminal transition)
+            // can auto-boot the same model. Matches the analogous capture in
+            // PseudoTerminal.m -openInternalProject: registerSession and
+            // MomentermProjectRestorer.swift's launchBookmark callback.
+            if let ai = aiCommand, !ai.isEmpty {
+                session.momentermInjectedCommand = ai
+            }
             self?.close()
         }
     }
