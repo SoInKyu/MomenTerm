@@ -171,6 +171,10 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
 
     // MomenTerm: per-pane attention strip (see header).
     MomentermAttentionBarView *_momentermAttentionBar;
+    // MomenTerm: lazy-allocated when the session's
+    // momentermSessionSticker is first set. Stays nil for panes the user
+    // never labelled, so unlabelled sessions cost no extra subview.
+    MomentermStickerView *_momentermStickerView;
 }
 
 + (double)titleHeight {
@@ -2561,6 +2565,45 @@ typedef NS_OPTIONS(NSUInteger, iTermCornerFlags) {
                                               NSMaxY(scrollFrame) - stripHeight,
                                               NSWidth(scrollFrame),
                                               stripHeight);
+    // MomenTerm: keep the sticker pill in lockstep with the attention strip
+    // so any layout entry point that re-anchors the strip also re-anchors
+    // the sticker (state restore, drag-reparent, setShowTitle:, resize).
+    [self updateMomentermStickerFrame];
+}
+
+// MomenTerm: position the sticker pill view directly under the attention
+// strip. Only called when _momentermStickerView already exists — lazy
+// allocation happens in -momentermUpdateStickerText: on the first time the
+// session receives a non-empty label, so sessions that never get one cost
+// zero extra views.
+- (void)updateMomentermStickerFrame {
+    if (!_scrollview || !_momentermStickerView) {
+        return;
+    }
+    const CGFloat attentionStripHeight = 2.0;
+    const CGFloat stickerHeight = [MomentermStickerView preferredHeight];
+    const NSRect scrollFrame = _scrollview.frame;
+    _momentermStickerView.frame = NSMakeRect(NSMinX(scrollFrame),
+                                             NSMaxY(scrollFrame) - attentionStripHeight - stickerHeight,
+                                             NSWidth(scrollFrame),
+                                             stickerHeight);
+}
+
+// MomenTerm: bridge invoked by PTYSession's setMomentermSessionSticker:
+// and by -setView: (drag-reparent / state restore). Lazy-creates the pill
+// view the first time a non-empty label arrives. Once allocated, the view
+// stays attached and toggles visibility internally via -setText:.
+- (void)momentermUpdateStickerText:(NSString *)text {
+    if (!_momentermStickerView) {
+        if (text.length == 0) {
+            return;
+        }
+        _momentermStickerView = [[MomentermStickerView alloc] initWithFrame:NSZeroRect];
+        _momentermStickerView.autoresizingMask = NSViewWidthSizable | NSViewMinYMargin;
+        [self addSubviewBelowFindView:_momentermStickerView];
+        [self updateMomentermStickerFrame];
+    }
+    [_momentermStickerView setText:text];
 }
 
 - (iTermAnnouncementViewController *)nextAnnouncement {

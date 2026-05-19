@@ -51,6 +51,7 @@
 @class PTYSession;
 @class iTermSessionNoteModel;
 @class MomentermAttentionBarView;
+@class MomentermStickerView;
 @class SplitSelectionView;
 @class SessionTitleView;
 @class WKWebViewConfiguration;
@@ -319,6 +320,11 @@ typedef NS_ENUM(NSUInteger, iTermSessionViewFindDriver) {
 - (void)takeStatusBarViewFrom:(SessionView *)donor;
 
 - (void)addSubviewBelowFindView:(NSView *)aView;
+
+// MomenTerm: push a new sticker label to the per-pane pill view. Lazy-inits
+// the MomentermStickerView on first call so this is also the entry point used
+// after window restoration / drag-reparent. Pass nil or empty string to hide.
+- (void)momentermUpdateStickerText:(nullable NSString *)text;
 
 // This keeps you from adding views over the find view.
 - (void)addSubview:(NSView *)view NS_UNAVAILABLE;

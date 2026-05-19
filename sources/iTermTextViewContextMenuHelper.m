@@ -303,7 +303,12 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         [item action] == @selector(replaceWithBase64Decoded:) ||
         [item action] == @selector(replaceWithBase64Encoded:) ||
         [item action] == @selector(revealCommandInfo:) ||
-        [item action] == @selector(removeNamedMark:)) {
+        [item action] == @selector(removeNamedMark:) ||
+        // MomenTerm: sticker entries are always enabled — both editing an
+        // existing label and attaching a fresh one are stateless operations
+        // that don't depend on the selection or shell state.
+        [item action] == @selector(editMomentermSticker:) ||
+        [item action] == @selector(removeMomentermSticker:)) {
         return YES;
     }
     if ([item action] == @selector(stopCoprocess:)) {
@@ -408,6 +413,33 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
         }
         return theMenu;
     }
+
+    // MomenTerm: per-pane sticker label pinned to the top of the context
+    // menu so labelling a pane is a one-glance action. The current sticker
+    // text decides between the "붙이기" single entry and the "편집…/제거"
+    // pair. We inline the addItemWithTitle: pattern here (rather than the
+    // add() block defined further down) because the block isn't in scope
+    // until later in this method.
+    NSString *momentermSticker = [self.delegate contextMenuMomentermSessionSticker:self];
+    if (momentermSticker.length > 0) {
+        NSMenuItem *stickerEditItem =
+            [theMenu addItemWithTitle:@"스티커 편집…"
+                               action:@selector(editMomentermSticker:)
+                        keyEquivalent:@""];
+        stickerEditItem.target = self;
+        NSMenuItem *stickerRemoveItem =
+            [theMenu addItemWithTitle:@"스티커 제거"
+                               action:@selector(removeMomentermSticker:)
+                        keyEquivalent:@""];
+        stickerRemoveItem.target = self;
+    } else {
+        NSMenuItem *stickerAddItem =
+            [theMenu addItemWithTitle:@"스티커 붙이기…"
+                               action:@selector(editMomentermSticker:)
+                        keyEquivalent:@""];
+        stickerAddItem.target = self;
+    }
+    [theMenu addItem:[NSMenuItem separatorItem]];
 
     const BOOL haveShortSelection = [self.delegate contextMenuSelectionIsShort:self];
     NSString *shortSelectedText = nil;
@@ -1281,6 +1313,17 @@ const int kMaxSelectedTextLengthForCustomActions = 400;
 
 - (void)bury:(id)sender {
     [self.delegate contextMenuBurySession:self];
+}
+
+// MomenTerm: surfaced by the right-click menu's 스티커 붙이기… / 편집… /
+// 제거 items. Both actions just relay to the delegate (PTYTextView ->
+// PTYSession) so the popover and persistence stay session-scoped.
+- (void)editMomentermSticker:(id)sender {
+    [self.delegate contextMenuMomentermEditSticker:self];
+}
+
+- (void)removeMomentermSticker:(id)sender {
+    [self.delegate contextMenuMomentermRemoveSticker:self];
 }
 
 - (void)reRunCommand:(id)sender {

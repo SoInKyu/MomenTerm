@@ -13,6 +13,7 @@
 		03971DCB502E47FDE12A476D /* MomentermAssets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 09D0823C95B27BF9DD71A4DD /* MomentermAssets.xcassets */; };
 		06D08D826AB790F00454B833 /* MomentermStatusBarProjectComponentImpl.m in Sources */ = {isa = PBXBuildFile; fileRef = F532D45B9B70D653B76E7A91 /* MomentermStatusBarProjectComponentImpl.m */; };
 		06E0C88E1DF9695400AA061B /* iTermServiceProvider.h in Headers */ = {isa = PBXBuildFile; fileRef = 06E0C88C1DF9695400AA061B /* iTermServiceProvider.h */; };
+		07B4069C1F30697753B0F138 /* MomentermStickerEditorPopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ACBCAD679EB5510B05EFE86 /* MomentermStickerEditorPopover.swift */; };
 		084F626684E68821BAEC7D9B /* iTermNonTextPasteHelper.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED49EE365D629DAE80503BFD /* iTermNonTextPasteHelper.swift */; };
 		0CF017334984D8419231D4C9 /* MomentermLocalLLMDetector.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9145588D43ACD881D84E1F69 /* MomentermLocalLLMDetector.swift */; };
 		0E917DB125F460B221026B56 /* iTermCharacterSourceTestHelper.h in Sources */ = {isa = PBXBuildFile; fileRef = 2491A846A993798FA4963536 /* iTermCharacterSourceTestHelper.h */; };
@@ -5233,6 +5234,7 @@
 		C6CFF825AECC6B31CD732D23 /* iTermSessionNameBuiltInFunction.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61DE2C181D86B1F93619B375 /* iTermSessionNameBuiltInFunction.swift */; };
 		C754E159FADC5472AB214686 /* MomentermPasskeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9712E61EA1B5E87F2995FD14 /* MomentermPasskeyManager.swift */; };
 		CB38FB7556A26003BEC278BA /* MomentermNewTabHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BCB55D89CEE16E48D34174F /* MomentermNewTabHandler.swift */; };
+		CB523EF94FE9444BB9C5853D /* MomentermStickerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE5B3663ED05BC1EA0A5C393 /* MomentermStickerView.swift */; };
 		CC1EDD90C29B2AFC43831C81 /* VT100StringConversionConfig.h in Sources */ = {isa = PBXBuildFile; fileRef = 6F87CB3CBFBF0D0E8781513C /* VT100StringConversionConfig.h */; };
 		CD2E8590B507B08EBD3313A3 /* iTermCompactProxyIconView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6CB27B6647329ACD05CE222 /* iTermCompactProxyIconView.swift */; };
 		CDA7DEFB07CAF834888B7D5F /* MomentermEmbeddedSidebarVC.swift in Sources */ = {isa = PBXBuildFile; fileRef = C21E1916B94130C2B39D3D93 /* MomentermEmbeddedSidebarVC.swift */; };
@@ -6358,6 +6360,7 @@
 		57EF08786C9D79C55CDAC970 /* iTermCharacterSets.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = iTermCharacterSets.m; sourceTree = "<group>"; };
 		59E8C286069801E089BBBA7F /* MomentermCCStatusBarComponentImpl.m */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.objc; path = MomentermCCStatusBarComponentImpl.m; sourceTree = "<group>"; };
 		5A96DF47553BD99532CC7CB4 /* MomentermWelcomeView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermWelcomeView.swift; sourceTree = "<group>"; };
+		5ACBCAD679EB5510B05EFE86 /* MomentermStickerEditorPopover.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermStickerEditorPopover.swift; sourceTree = "<group>"; };
 		5ECE005D1454E59B004861E9 /* PseudoTerminalRestorer.h */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.h; path = PseudoTerminalRestorer.h; sourceTree = "<group>"; tabWidth = 4; };
 		5ECE005E1454E59B004861E9 /* PseudoTerminalRestorer.m */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.objc; path = PseudoTerminalRestorer.m; sourceTree = "<group>"; tabWidth = 4; };
 		61DE2C181D86B1F93619B375 /* iTermSessionNameBuiltInFunction.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermSessionNameBuiltInFunction.swift; sourceTree = "<group>"; };
@@ -9330,6 +9333,7 @@
 		CA1C7B91071000DE37B9DA33 /* iTermSessionTabStatus.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = iTermSessionTabStatus.swift; sourceTree = "<group>"; };
 		CA34A6F29B10471D8FD572F6 /* GlobalJobMonitor.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = GlobalJobMonitor.swift; sourceTree = "<group>"; };
 		CB2F48F836C5732146BCEDD9 /* iTermStreamingPNGWriter.h */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.c.h; path = iTermStreamingPNGWriter.h; sourceTree = "<group>"; };
+		CE5B3663ED05BC1EA0A5C393 /* MomentermStickerView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermStickerView.swift; sourceTree = "<group>"; };
 		D0AB973E5C09DBEB81A0AA1C /* MomentermSessionRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermSessionRegistry.swift; sourceTree = "<group>"; };
 		D3CE2D4C1A00936F0098ED99 /* PSMDarkTabStyle.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = PSMDarkTabStyle.h; sourceTree = "<group>"; };
 		D3CE2D4D1A00936F0098ED99 /* PSMDarkTabStyle.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = PSMDarkTabStyle.m; sourceTree = "<group>"; };
@@ -9772,6 +9776,8 @@
 				E516C7A7310B0D8FDB6C95ED /* MomentermTitlebarAccessoryVC.swift */,
 				1D48A6556960C73A8046CD57 /* MomentermAttentionBarView.swift */,
 				DF242966DFFE5BD86FC9681A /* MomentermClaudePromptDetector.swift */,
+				CE5B3663ED05BC1EA0A5C393 /* MomentermStickerView.swift */,
+				5ACBCAD679EB5510B05EFE86 /* MomentermStickerEditorPopover.swift */,
 			);
 			name = Classes;
 			path = sources/;
@@ -20557,6 +20563,8 @@
 				6ECF849F1EDC063566C3730E /* MomentermTitlebarAccessoryVC.swift in Sources */,
 				9811AA6A1FA700B7FBAB4A92 /* MomentermAttentionBarView.swift in Sources */,
 				158EA5A48C0FF0E3803EE553 /* MomentermClaudePromptDetector.swift in Sources */,
+				CB523EF94FE9444BB9C5853D /* MomentermStickerView.swift in Sources */,
+				07B4069C1F30697753B0F138 /* MomentermStickerEditorPopover.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

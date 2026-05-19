@@ -171,6 +171,13 @@ runCommandInBackground:(NSString *)command;
     removeNamedMark:(id<VT100ScreenMarkReading>)mark;
 - (BOOL)contextMenuCurrentTabHasMultipleSessions:(iTermTextViewContextMenuHelper *)contextMenu;
 
+// MomenTerm: per-pane "스티커" label management. The helper reads the
+// current text to pick between "붙이기" / "편집…+제거" menu labels, then
+// forwards user choice through edit (opens popover) / remove (clears).
+- (nullable NSString *)contextMenuMomentermSessionSticker:(iTermTextViewContextMenuHelper *)contextMenu;
+- (void)contextMenuMomentermEditSticker:(iTermTextViewContextMenuHelper *)contextMenu;
+- (void)contextMenuMomentermRemoveSticker:(iTermTextViewContextMenuHelper *)contextMenu;
+
 - (void)contextMenuFoldMark:(id<VT100ScreenMarkReading>)mark;
 - (void)contextMenuUnfoldMark:(id<iTermFoldMarkReading>)mark;
 - (id<iTermFoldMarkReading>)contextMenuFoldAtLine:(int)line;

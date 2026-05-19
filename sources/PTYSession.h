@@ -561,6 +561,16 @@ backgroundColor:(NSColor *)backgroundColor;
 // nil for project-less / shell-only sessions, in which case split does nothing.
 @property(nonatomic, copy, nullable) NSString *momentermInjectedCommand;
 
+// MomenTerm: short user-typed label ("backend logs", "claude planning",
+// "build watcher") shown as a rounded pill at the top of this pane via
+// MomentermStickerView. Edited by the right-click context menu and
+// persisted in the session arrangement (SESSION_ARRANGEMENT_MOMENTERM_STICKER)
+// so it survives window restoration / app relaunch. The setter
+// propagates the new text to the SessionView's sticker view immediately.
+// Not inherited by split children (unlike momentermInjectedCommand) —
+// stickers are explicit human labels, not session lineage.
+@property(nonatomic, copy, nullable) NSString *momentermSessionSticker;
+
 // Commands issued, directories entered, and hosts connected to during this session.
 // Requires shell integration.
 @property(nonatomic, readonly) NSMutableArray<NSString *> *commands;  // of NSString

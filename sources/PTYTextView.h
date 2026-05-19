@@ -158,6 +158,14 @@ extern const CGFloat PTYTextViewMarginClickGraceWidth;
 - (void)textViewToggleBroadcastingInput;
 - (void)textViewCloseWithConfirmation;
 - (void)textViewRestartWithConfirmation;
+
+// MomenTerm: per-pane sticker label, surfaced by the right-click context
+// menu (스티커 붙이기… / 편집… / 제거). The session implements these and
+// PTYTextView+ARC.m forwards the iTermContextMenuHelperDelegate hooks
+// through to here.
+- (NSString *)textViewMomentermSessionSticker;
+- (void)textViewMomentermEditSessionSticker;
+- (void)textViewMomentermRemoveSessionSticker;
 - (void)textViewPasteFromSessionWithMostRecentSelection:(PTYSessionPasteFlags)flags;
 - (BOOL)textViewWindowUsesTransparency;
 - (BOOL)textViewAmbiguousWidthCharsAreDoubleWidth;

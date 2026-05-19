@@ -323,6 +323,7 @@ static NSString *const SESSION_ARRANGEMENT_TIMESTAMP_BASELINE = @"Timestamp Base
 static NSString *const SESSION_ARRANGEMENT_BROWSER_TARGET = @"Browser Target";  // String
 static NSString *const SESSION_ARRANGEMENT_TAB_STATUS = @"Tab Status";  // NSDictionary
 static NSString *const SESSION_ARRANGEMENT_SESSION_NOTE = @"Session Note";  // NSDictionary (graph-encoded)
+static NSString *const SESSION_ARRANGEMENT_MOMENTERM_STICKER = @"MomenTerm Sticker";  // NSString — user-typed pane label
 
 // Keys for dictionary in SESSION_ARRANGEMENT_PROGRAM
 static NSString *const kProgramType = @"Type";  // Value will be one of the kProgramTypeXxx constants.
@@ -1162,6 +1163,7 @@ ITERM_WEAKLY_REFERENCEABLE
     [_bindings release];
     [_apsContext release];
     [_sessionNoteModel release];
+    [_momentermSessionSticker release];
 
     [super dealloc];
 }
@@ -1608,6 +1610,14 @@ ITERM_WEAKLY_REFERENCEABLE
     NSDictionary *sessionNoteDict = [NSDictionary castFrom:arrangement[SESSION_ARRANGEMENT_SESSION_NOTE]];
     if (sessionNoteDict) {
         aSession.sessionNoteModel = [iTermSessionNoteModel fromArrangement:sessionNoteDict];
+    }
+    // MomenTerm: restore the user-typed split label. setMomentermSessionSticker:
+    // propagates the value to the SessionView's pill on the next runloop tick;
+    // at this point sessionView is already wired (line ~1726) so the strip
+    // renders as soon as the session is added to the window.
+    NSString *stickerText = [NSString castFrom:arrangement[SESSION_ARRANGEMENT_MOMENTERM_STICKER]];
+    if (stickerText.length > 0) {
+        aSession.momentermSessionSticker = stickerText;
     }
     if (didRestoreContents && attachedToServer) {
         if (arrangement[SESSION_ARRANGEMENT_ALERT_ON_NEXT_MARK]) {
@@ -5849,6 +5859,10 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
     [_view setFindDriverDelegate:self];
     [self updateViewBackgroundImage];
     [newView.title updateLockButton];
+    // MomenTerm: window drag-reparent / restoration can attach this session
+    // to a fresh SessionView that has no sticker pill yet — push the current
+    // text so the new view renders the label immediately.
+    [newView momentermUpdateStickerText:_momentermSessionSticker];
 }
 
 - (NSStringEncoding)encoding {
@@ -6360,6 +6374,12 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
     }
 
     result[SESSION_ARRANGEMENT_NAME_CONTROLLER_STATE] = [_nameController stateDictionary];
+    // MomenTerm: persist the per-pane sticker text. Encoded outside the
+    // includeContents branch so it survives "Save Window Arrangement" (which
+    // typically passes contents=NO) as well as full state restore.
+    if (_momentermSessionSticker.length > 0) {
+        result[SESSION_ARRANGEMENT_MOMENTERM_STICKER] = _momentermSessionSticker;
+    }
     if (includeContents) {
         __block int numberOfLinesDropped = 0;
         if (!self.isBrowserSession) {
@@ -17916,6 +17936,48 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
                                    coords:nil
                         deduplicateDECDHL:NO];
     return [result isKindOfClass:[NSString class]] ? result : @"";
+}
+
+#pragma mark - MomenTerm session sticker
+
+// Custom setter for the per-pane sticker text. MRR-safe (file is non-ARC).
+// Idempotent on identity so redundant calls — e.g. setView: re-applying the
+// same value on a no-op view swap — don't trigger a needless redraw on the
+// pill view. Empty-string is normalized to nil up at the call site (the
+// popover's onSave and the "스티커 제거" menu item both pass nil), so this
+// setter just stores whatever it's given.
+- (void)setMomentermSessionSticker:(NSString *)newValue {
+    if (_momentermSessionSticker == newValue ||
+        (newValue && [_momentermSessionSticker isEqualToString:newValue])) {
+        return;
+    }
+    NSString *copy = [newValue copy];
+    [_momentermSessionSticker release];
+    _momentermSessionSticker = copy;
+    [_view momentermUpdateStickerText:_momentermSessionSticker];
+}
+
+// PTYTextViewDelegate forwarding — surfaced by PTYTextView+ARC.m
+// (contextMenuSessionSticker / EditSticker / RemoveSticker) which itself is
+// driven by the right-click menu items added in iTermTextViewContextMenuHelper.
+
+- (NSString *)textViewMomentermSessionSticker {
+    return _momentermSessionSticker;
+}
+
+- (void)textViewMomentermEditSessionSticker {
+    if (!_view) {
+        return;
+    }
+    [MomentermStickerEditorPopover presentOverView:_view
+                                       initialText:_momentermSessionSticker
+                                            onSave:^(NSString *result) {
+        self.momentermSessionSticker = (result.length > 0) ? result : nil;
+    }];
+}
+
+- (void)textViewMomentermRemoveSessionSticker {
+    self.momentermSessionSticker = nil;
 }
 
 - (void)screenConvertAbsoluteRange:(VT100GridAbsCoordRange)range

@@ -1846,6 +1846,21 @@ hasOpenAnnotationInRange:(VT100GridCoordRange)coordRange {
     [self.delegate textViewBurySession];
 }
 
+// MomenTerm: forward the three sticker hooks through to PTYSession via the
+// existing PTYTextViewDelegate. The session owns the sticker state +
+// popover presentation; the textview is just a passthrough.
+- (NSString *)contextMenuMomentermSessionSticker:(iTermTextViewContextMenuHelper *)contextMenu {
+    return [self.delegate textViewMomentermSessionSticker];
+}
+
+- (void)contextMenuMomentermEditSticker:(iTermTextViewContextMenuHelper *)contextMenu {
+    [self.delegate textViewMomentermEditSessionSticker];
+}
+
+- (void)contextMenuMomentermRemoveSticker:(iTermTextViewContextMenuHelper *)contextMenu {
+    [self.delegate textViewMomentermRemoveSessionSticker];
+}
+
 - (void)contextMenu:(iTermTextViewContextMenuHelper *)contextMenu amend:(NSMenu *)menu {
     if ([[self delegate] respondsToSelector:@selector(menuForEvent:menu:)]) {
         [[self delegate] menuForEvent:nil menu:menu];
