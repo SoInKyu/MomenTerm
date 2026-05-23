@@ -1143,7 +1143,10 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
         return;
     }
     BOOL visible = _contentView.shouldShowMomentermSidebar;
-    _momentermToggleButton.contentTintColor = visible ? [NSColor controlAccentColor] : nil;
+    // MomenTerm: nil tint 는 macOS 26 Tahoe 의 다크 titlebar 에서 SF Symbol 윤곽이
+    // 배경에 묻혀 보이지 않음. hidden 상태에서도 명시적으로 secondaryLabelColor 를
+    // 지정해 가시성을 보장한다. visible 일 때는 controlAccentColor 로 active 표시.
+    _momentermToggleButton.contentTintColor = visible ? [NSColor controlAccentColor] : [NSColor secondaryLabelColor];
 }
 
 - (void)it_momentermCheckPasskeyIfNeeded {
