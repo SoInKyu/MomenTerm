@@ -479,7 +479,10 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         let isLast = (cell == tabBar?.cells()?.lastObject as? PSMTabBarCell)
         
         if tabBar?.window?.isKeyWindow == true {
-            if cell.state == .on {
+            // MomenTerm: 활성 + tabColor 셀(네온 그린 풀필) 은 자체로 강한 시각 강조라
+            // drop shadow 가 불필요. shadow PNG(95x56pt) 가 36pt 바 밖으로 흘러나가 셀
+            // 좌우/아래로 fade 검은 fringe 를 만들어 사각형 풀필 외관을 깨는 것을 차단.
+            if cell.state == .on && cell.tabColor == nil {
                 drawDropShadow(cell: cell)
             }
         }
@@ -620,7 +623,16 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         defer {
             NSGraphicsContext.current?.restoreGraphicsState()
         }
-        clippingPath(rect: backgroundRect).addClip()
+        // MomenTerm: 활성 + tabColor 셀이 있으면 셀 단계 클립을 바 전체 사각형으로 교체.
+        // 기존 pill 클립(barHeight 28pt, radius 14pt)이 36pt 바 안에서 셀을 가운데 잘라
+        // 네온 그린이 셀 전체를 채우지 못하던 문제 해소. 비활성 셀은 backgroundRect inset 으로
+        // 이미 좁게 그려서 새는 페인트 없음.
+        let allCells = (bar.cells() as? [PSMTabBarCell]) ?? []
+        let hasFullFillCell = allCells.contains { $0.state == .on && $0.tabColor != nil }
+        let cellClipPath: NSBezierPath = hasFullFillCell
+            ? NSBezierPath(rect: backgroundRect)
+            : clippingPath(rect: backgroundRect)
+        cellClipPath.addClip()
         
         // no tab view == not connected
         guard let _ = bar.tabView else {
@@ -815,52 +827,32 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
                                           horizontal: Bool,
                                           isHighlighted: Bool) {
         backgroundColorSelected(selected, highlightAmount: isHighlighted ? 1.0 : 0.0).set()
-        
-        let radius = barRadius - 2.5
-        let rect = backgroundRect(for: cellFrame)
+
+        // MomenTerm: 활성 탭 + tabColor 가 있으면 pill 대신 바 전체 높이의 사각형을
+        // cellFrame.x/width 자리에 그려 셀 슬롯을 빈틈없이 네온 그린으로 덮음.
+        // cellFrame.height 는 generic.height-1 이라 1pt 부족 + 풀스크린 등 insets 손실까지
+        // 보강하기 위해 y=0..tabBarHeight 로 명시 확장. 비활성 탭은 기존 Tahoe pill 유지.
+        let fullFill = selected && tabColor != nil
+        let radius: CGFloat = fullFill ? 0 : (barRadius - 2.5)
+        let rect: NSRect = fullFill
+            ? NSRect(x: cellFrame.minX, y: 0, width: cellFrame.width, height: tabBarHeight)
+            : backgroundRect(for: cellFrame)
         let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         path.fill()
-        if selected {
+        if selected && !fullFill {
             drawCellOutline(path: path, rect: rect, radius: radius)
         }
 
-        // MomenTerm: only the selected tab is tinted; unselected tabs skip the
-        // tabColor block entirely and keep the default Tahoe gray background.
         if let tabColor, selected {
             let color = cellBackgroundColor(forTabColor: tabColor, selected: true)
             color.set()
-            if selected {
-                // Tint the outline if this cell is selected.
-                NSGraphicsContext.current?.saveGraphicsState()
-                path.addClip()
-                rect.fill(using: .color)
-                
-                NSColor(white: 1.0, alpha: tabColor.perceivedBrightness).set()
-                rect.fill(using: .plusLighter)
-                NSGraphicsContext.current?.restoreGraphicsState()
-            }
-            
-            // Tint the inside.
-            if selected {
-                let path2 = NSBezierPath(roundedRect: rect.insetBy(dx: 1.0, dy: 1.0),
-                                         xRadius: radius - 1.0,
-                                         yRadius: radius - 1.0)
-                path2.fill()
-            } else {
-                let path2 = NSBezierPath(roundedRect: rect,
-                                         xRadius: radius,
-                                         yRadius: radius)
-                NSGraphicsContext.current?.saveGraphicsState()
-                defer {
-                    NSGraphicsContext.current?.restoreGraphicsState()
-                }
-                path2.addClip()
-                path2.lineWidth = 4.0
-                path2.stroke()
+            NSGraphicsContext.current?.saveGraphicsState()
+            path.addClip()
+            rect.fill(using: .color)
 
-                color.withAlphaComponent(0.1).set()
-                path2.fill()
-            }
+            NSColor(white: 1.0, alpha: tabColor.perceivedBrightness).set()
+            rect.fill(using: .plusLighter)
+            NSGraphicsContext.current?.restoreGraphicsState()
         }
     }
     
@@ -1157,9 +1149,13 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         let alpha: CGFloat
         
         if keyMainAndActive {
-            alpha = selected ? 1 : 0.4
+            // MomenTerm: macOS 26 Tahoe pill 디자인 위에 형광 그린이 100% 불투명으로
+            // 덮히면 cell 전체가 가득 차 보여 가독성/시각 균형이 무너짐. selected alpha
+            // 를 0.4 로 낮춰 옅은 mint tint 만 입히고 Tahoe 기본 selected pill 모양을
+            // 살림. 활성/비활성 alpha 가 같아도 selected pill 자체의 명도 차이로 구분 유지.
+            alpha = selected ? 0.4 : 0.4
         } else {
-            alpha = selected ? 0.6 : 0.3
+            alpha = selected ? 0.3 : 0.3
         }
         
         var components: [CGFloat] = [0, 0, 0, 0]
