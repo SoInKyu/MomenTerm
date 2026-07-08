@@ -1,10 +1,23 @@
 # Handoff — MomenTerm
 
-> 마지막 업데이트: 2026-04-19
+> 마지막 업데이트: 2026-07-08
 > **참고**: 이 파일은 세션 간 작업 컨텍스트를 유지합니다.
 
 ## 현재 목표
 MT 요구사항 문서 기반 전체 구현 — Phase 1~4 완료, Phase 5~7 골격
+
+## 추가 완료 (2026-07-08 세션)
+- [x] iTerm2 → MomenTerm 사용자 노출 문구 일관성 정리 (26 파일) — 알림/프롬프트/설정 설명/Tip 본문의 제품명, 버그 신고 URL → GitHub issues. 프로토콜 식별자·실경로·업스트림 문서 URL 은 보존 (commit b0bfdd27a)
+- [x] 터미널 창 자유 리사이즈 기본화 — disableWindowSizeSnap 기본값 YES (commit 167d26b99)
+- [x] Tahoe 활성 그린 탭 풀필 라운드 3 — intercellSpacing 이음새 + 바 가장자리 마진까지 확장 (commit 54384f426)
+- [x] Git Graph 고도화 — 레인 색상, ref 종류별 pill, 커밋 상세 팝오버, 우클릭 메뉴, 10초 자동 새로고침, %x1f 파싱, edgesByRow 인덱스 (commit 95363c156)
+- [x] 환경: Xcode 26.6(17F113) 업데이트 대응 — deps 재빌드 + Metal Toolchain 다운로드. sfsymbolenum 타깃은 SF Symbols.app 미설치로 스킵 (체크인된 헤더 유효)
+
+### 미결/후속 후보
+- [ ] 사용자 make run 화면 확인: 탭 풀필(가운데/첫/마지막 탭), Git Graph 팝오버·메뉴·색상, 창 리사이즈
+- [ ] beta/dev/nightly/preview plist 의 SUFeedURL 이 여전히 iterm2.com (릴리스 채널 미사용이라 보류)
+- [ ] iTerm2ImportStatus 헬퍼 앱 메뉴 브랜딩 (앱 개명 필요, 별도 스코프)
+- [ ] release.sh 0.9.13 cut (스티커 커밋 bc1981f11 이후 누적분 포함)
 
 ## 최근 완료
 - [x] `mt` CLI 패키지 생성 (`mt-cli/`) — TypeScript, npm, commander 기반
