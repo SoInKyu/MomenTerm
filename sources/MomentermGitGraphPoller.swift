@@ -75,36 +75,56 @@ import Foundation
         }
     }
 
+    /// Fetch the full details of one commit (header, message, and diffstat)
+    /// asynchronously. The completion runs on the main thread.
+    @objc func commitDetail(cwd: String, sha: String, completion: @escaping (String) -> Void) {
+        queue.async {
+            let text = Self.runGit(cwd: cwd,
+                                   arguments: ["show", "--stat", "--format=medium", "--no-color", sha])
+            DispatchQueue.main.async {
+                completion(text ?? "Unable to load commit details.")
+            }
+        }
+    }
+
     // MARK: - Implementation
 
-    private static let format = "%H|%P|%D|%an|%at|%s"
+    // 0x1f unit separator keeps fields unambiguous; see MomentermGitLogParser.
+    private static let format = "%H%x1f%P%x1f%D%x1f%an%x1f%at%x1f%s"
     private static let maxCommits = 200
 
     private static func runGitLog(cwd: String) -> (Bool, [MomentermGitCommit]) {
+        guard let text = runGit(cwd: cwd, arguments: [
+            "log", "--all", "--topo-order", "--decorate=full",
+            "--format=\(format)",
+            "-\(maxCommits)"
+        ]) else {
+            // Not a git repo, no commits, or git not on PATH.
+            return (false, [])
+        }
+        let commits = MomentermGitLogParser.parse(text)
+        return (true, commits)
+    }
+
+    /// Run git in cwd and return stdout, or nil on launch failure / non-zero exit.
+    private static func runGit(cwd: String, arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
         process.currentDirectoryURL = URL(fileURLWithPath: cwd)
-        process.arguments = [
-            "log", "--all", "--topo-order",
-            "--format=\(format)",
-            "-\(maxCommits)"
-        ]
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = Pipe()
         do {
             try process.run()
         } catch {
-            return (false, [])
-        }
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            // Not a git repo, no commits, or git not on PATH.
-            return (false, [])
+            return nil
         }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        let text = String(data: data, encoding: .utf8) ?? ""
-        let commits = MomentermGitLogParser.parse(text)
-        return (true, commits)
+        process.waitUntilExit()
+        if process.terminationStatus != 0 {
+            return nil
+        }
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }

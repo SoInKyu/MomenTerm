@@ -29,6 +29,17 @@ final class MomentermGitGraphCellView: NSView {
     private let nodeRadius: CGFloat = 4
     private let leftInset: CGFloat = 8
 
+    /// Stable per-lane palette so each branch line keeps one color for its
+    /// whole length; cycles when histories are wider than the palette.
+    private static let laneColors: [NSColor] = [
+        .systemBlue, .systemGreen, .systemOrange, .systemPurple,
+        .systemPink, .systemTeal, .systemIndigo, .systemBrown,
+    ]
+
+    private static func laneColor(_ column: Int) -> NSColor {
+        return laneColors[column % laneColors.count]
+    }
+
     override var isFlipped: Bool { true }  // top-down coordinates so y grows downward
 
     override func draw(_ dirtyRect: NSRect) {
@@ -39,69 +50,63 @@ final class MomentermGitGraphCellView: NSView {
         let cellBottom: CGFloat = h
         let cellMid: CGFloat = h * 0.5
 
-        // 1. Edges that touch this row.
-        let edges = NSBezierPath()
-        edges.lineWidth = 1.4
-        edges.lineCapStyle = .round
-
-        for edge in layout.edges {
+        // 1. Edges that touch this row, each stroked in its origin lane's color.
+        for edge in layout.edges(touchingRow: rowIndex) {
             let fr = edge.from.row
             let tr = edge.to.row
-            // Edges always go from a newer commit (smaller row) to its parent (larger row).
-            // Ignore unrelated edges.
-            if rowIndex < fr || rowIndex > tr { continue }
             if fr == tr { continue }
 
             let fx = laneCenter(column: edge.from.column)
             let tx = laneCenter(column: edge.to.column)
 
+            let path = NSBezierPath()
+            path.lineWidth = 1.4
+            path.lineCapStyle = .round
+
             if rowIndex == fr {
                 // Edge starts here: vertical from this commit's center to bottom in its own lane.
-                edges.move(to: NSPoint(x: fx, y: cellMid))
-                edges.line(to: NSPoint(x: fx, y: cellBottom))
+                path.move(to: NSPoint(x: fx, y: cellMid))
+                path.line(to: NSPoint(x: fx, y: cellBottom))
             } else if rowIndex == tr {
                 // Edge ends here: from (origin lane, top) to (parent lane = this commit's lane, center).
-                edges.move(to: NSPoint(x: fx, y: cellTop))
+                path.move(to: NSPoint(x: fx, y: cellTop))
                 if abs(fx - tx) < 0.5 {
-                    edges.line(to: NSPoint(x: tx, y: cellMid))
+                    path.line(to: NSPoint(x: tx, y: cellMid))
                 } else {
                     let cy1 = (cellTop + cellMid) * 0.5
-                    edges.curve(to: NSPoint(x: tx, y: cellMid),
-                                controlPoint1: NSPoint(x: fx, y: cy1),
-                                controlPoint2: NSPoint(x: tx, y: cy1))
+                    path.curve(to: NSPoint(x: tx, y: cellMid),
+                               controlPoint1: NSPoint(x: fx, y: cy1),
+                               controlPoint2: NSPoint(x: tx, y: cy1))
                 }
             } else {
                 // Pass-through: straight vertical line through this cell in the origin's lane.
-                edges.move(to: NSPoint(x: fx, y: cellTop))
-                edges.line(to: NSPoint(x: fx, y: cellBottom))
+                path.move(to: NSPoint(x: fx, y: cellTop))
+                path.line(to: NSPoint(x: fx, y: cellBottom))
             }
+
+            Self.laneColor(edge.from.column).withAlphaComponent(0.85).setStroke()
+            path.stroke()
         }
 
-        NSColor.tertiaryLabelColor.setStroke()
-        edges.stroke()
-
-        // 2. Node dot for this row.
+        // 2. Node dot for this row, in its lane's color. HEAD gets an accent ring.
         let nodeX = laneCenter(column: node.column)
         let dotRect = NSRect(x: nodeX - nodeRadius, y: cellMid - nodeRadius,
                              width: nodeRadius * 2, height: nodeRadius * 2)
         let dot = NSBezierPath(ovalIn: dotRect)
-        let fill: NSColor
-        let stroke: NSColor
-        if node.commit.hasHEAD {
-            fill = .controlAccentColor
-            stroke = NSColor.controlAccentColor.shadow(withLevel: 0.25) ?? .controlAccentColor
-        } else if !node.commit.refs.isEmpty {
-            fill = .systemYellow
-            stroke = .systemOrange
-        } else {
-            fill = .secondaryLabelColor
-            stroke = .secondaryLabelColor
-        }
-        fill.setFill()
+        let laneColor = Self.laneColor(node.column)
+        laneColor.setFill()
         dot.fill()
-        stroke.setStroke()
+        laneColor.setStroke()
         dot.lineWidth = 1.0
         dot.stroke()
+
+        if node.commit.hasHEAD {
+            let ringRect = dotRect.insetBy(dx: -2.5, dy: -2.5)
+            let ring = NSBezierPath(ovalIn: ringRect)
+            ring.lineWidth = 1.5
+            NSColor.controlAccentColor.setStroke()
+            ring.stroke()
+        }
     }
 
     private func laneCenter(column: Int) -> CGFloat {

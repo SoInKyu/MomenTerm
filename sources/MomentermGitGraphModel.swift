@@ -14,13 +14,54 @@ import Foundation
 struct MomentermGitCommit: Equatable {
     let sha: String           // full sha
     let parents: [String]     // full parent shas
-    let refs: [String]        // decorated refs, e.g. "HEAD -> master", "origin/master"
+    let refs: [String]        // decorated refs from --decorate=full, e.g. "HEAD -> refs/heads/master"
     let summary: String
     let author: String
     let date: Date
 
     var shortSha: String { String(sha.prefix(7)) }
     var hasHEAD: Bool { refs.contains { $0.contains("HEAD") } }
+    var refInfos: [MomentermGitRefInfo] { refs.map { MomentermGitRefInfo.from(decoration: $0) } }
+}
+
+enum MomentermGitRefKind {
+    case head
+    case localBranch
+    case remoteBranch
+    case tag
+}
+
+struct MomentermGitRefInfo: Equatable {
+    let name: String
+    let kind: MomentermGitRefKind
+
+    /// Classify one `%D` decoration produced with --decorate=full, e.g.
+    /// “HEAD -> refs/heads/main”, “refs/remotes/origin/main”, “refs/tags/v1.0”,
+    /// or a bare “HEAD” when detached.
+    static func from(decoration: String) -> MomentermGitRefInfo {
+        var s = decoration
+        var isHEAD = false
+        if s == "HEAD" {
+            return MomentermGitRefInfo(name: "HEAD", kind: .head)
+        }
+        if s.hasPrefix("HEAD -> ") {
+            isHEAD = true
+            s = String(s.dropFirst("HEAD -> ".count))
+        }
+        if s.hasPrefix("refs/heads/") {
+            return MomentermGitRefInfo(name: String(s.dropFirst("refs/heads/".count)),
+                                       kind: isHEAD ? .head : .localBranch)
+        }
+        if s.hasPrefix("refs/remotes/") {
+            return MomentermGitRefInfo(name: String(s.dropFirst("refs/remotes/".count)),
+                                       kind: .remoteBranch)
+        }
+        if s.hasPrefix("refs/tags/") {
+            return MomentermGitRefInfo(name: String(s.dropFirst("refs/tags/".count)),
+                                       kind: .tag)
+        }
+        return MomentermGitRefInfo(name: s, kind: isHEAD ? .head : .localBranch)
+    }
 }
 
 struct MomentermGitGraphLayout {
@@ -39,8 +80,16 @@ struct MomentermGitGraphLayout {
     let edges: [Edge]
     /// 0-based maximum column index actually used, or -1 if empty.
     let maxColumn: Int
+    /// edgesByRow[r] = every edge whose row span includes r, so a cell can
+    /// draw its slice without scanning the full edge list.
+    let edgesByRow: [[Edge]]
 
-    static let empty = MomentermGitGraphLayout(nodes: [], edges: [], maxColumn: -1)
+    static let empty = MomentermGitGraphLayout(nodes: [], edges: [], maxColumn: -1, edgesByRow: [])
+
+    func edges(touchingRow row: Int) -> [Edge] {
+        guard row >= 0, row < edgesByRow.count else { return [] }
+        return edgesByRow[row]
+    }
 }
 
 enum MomentermGitGraphLayouter {
@@ -106,20 +155,33 @@ enum MomentermGitGraphLayouter {
             }
         }
 
+        var edgesByRow: [[MomentermGitGraphLayout.Edge]] = Array(repeating: [], count: nodes.count)
+        for edge in edges {
+            let lo = min(edge.from.row, edge.to.row)
+            let hi = max(edge.from.row, edge.to.row)
+            guard lo >= 0, hi < nodes.count else { continue }
+            for r in lo...hi {
+                edgesByRow[r].append(edge)
+            }
+        }
+
         let maxColumn = (nodes.map { $0.column }.max() ?? -1)
-        return MomentermGitGraphLayout(nodes: nodes, edges: edges, maxColumn: maxColumn)
+        return MomentermGitGraphLayout(nodes: nodes, edges: edges, maxColumn: maxColumn, edgesByRow: edgesByRow)
     }
 }
 
 // MARK: - git log parser
 
 enum MomentermGitLogParser {
-    /// Each input line is the output of `git log --all --format='%H|%P|%D|%an|%at|%s' --topo-order -200`.
-    /// Pipes are safe field separators because git never emits them in those fields literally for these formats.
+    /// Each input line is the output of `git log --all --decorate=full
+    /// --format='%H%x1f%P%x1f%D%x1f%an%x1f%at%x1f%s' --topo-order -200`.
+    /// The 0x1f unit separator cannot appear in shas, ref names, or author
+    /// names, so fields parse unambiguously even when the author name or
+    /// summary contains characters like `|`.
     static func parse(_ text: String) -> [MomentermGitCommit] {
         var commits: [MomentermGitCommit] = []
         for raw in text.split(whereSeparator: { $0 == "\n" }) {
-            let parts = raw.split(separator: "|", maxSplits: 5, omittingEmptySubsequences: false).map(String.init)
+            let parts = raw.split(separator: "\u{1F}", maxSplits: 5, omittingEmptySubsequences: false).map(String.init)
             guard parts.count == 6 else { continue }
             let sha = parts[0]
             let parents = parts[1].split(whereSeparator: { $0 == " " }).map(String.init)

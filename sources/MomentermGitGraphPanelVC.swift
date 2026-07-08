@@ -44,6 +44,13 @@ final class MomentermGitGraphPanelVC: NSViewController, NSTableViewDataSource, N
 
     private let scrollView = NSScrollView()
     private let tableView = NSTableView()
+    private var refreshTimer: Timer?
+    private var detailPopover: NSPopover?
+    private weak var detailTextView: NSTextView?
+
+    /// Refresh cadence while the panel is visible. git log on 200 commits is
+    /// cheap and the poller de-dupes overlapping requests.
+    private static let autoRefreshInterval: TimeInterval = 10
 
     private let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -63,10 +70,28 @@ final class MomentermGitGraphPanelVC: NSViewController, NSTableViewDataSource, N
             selector: #selector(graphUpdated(_:)),
             name: MomentermGitGraphPoller.didUpdateNotification,
             object: nil)
+        startAutoRefreshTimer()
     }
 
     deinit {
+        refreshTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
+    }
+
+    private func startAutoRefreshTimer() {
+        let timer = Timer.scheduledTimer(withTimeInterval: Self.autoRefreshInterval,
+                                         repeats: true) { [weak self] _ in
+            guard let self,
+                  self.isViewLoaded,
+                  let window = self.view.window,
+                  window.isVisible,
+                  !self.view.isHiddenOrHasHiddenAncestor else {
+                return
+            }
+            self.refresh()
+        }
+        timer.tolerance = 2
+        refreshTimer = timer
     }
 
     // MARK: - Public
@@ -166,6 +191,9 @@ final class MomentermGitGraphPanelVC: NSViewController, NSTableViewDataSource, N
         tableView.intercellSpacing = NSSize(width: 0, height: 0)
         tableView.allowsColumnReordering = false
         tableView.allowsColumnResizing = true
+        tableView.target = self
+        tableView.doubleAction = #selector(rowDoubleClicked(_:))
+        tableView.menu = makeRowContextMenu()
 
         addColumn("graph", title: "Graph", width: 110, min: 60, max: 220)
         addColumn("description", title: "Description", width: 220, min: 140, max: nil)
@@ -220,10 +248,113 @@ final class MomentermGitGraphPanelVC: NSViewController, NSTableViewDataSource, N
         tableView.addTableColumn(col)
     }
 
+    // MARK: - Row actions
+
+    private func makeRowContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        func add(_ title: String, _ selector: Selector) {
+            let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+            item.target = self
+            menu.addItem(item)
+        }
+        add("Show Commit Details", #selector(showDetailsForClickedRow(_:)))
+        menu.addItem(.separator())
+        add("Copy Commit Hash", #selector(copyFullSha(_:)))
+        add("Copy Short Hash", #selector(copyShortSha(_:)))
+        add("Copy Summary", #selector(copySummary(_:)))
+        menu.addItem(.separator())
+        add("Copy Checkout Command", #selector(copyCheckoutCommand(_:)))
+        return menu
+    }
+
+    /// The commit the context menu or double-click applies to.
+    private func actionTargetCommit() -> MomentermGitCommit? {
+        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        guard row >= 0, row < filtered.count else { return nil }
+        return filtered[row]
+    }
+
+    private func copyToPasteboard(_ string: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
+    }
+
+    @objc private func copyFullSha(_ sender: Any?) {
+        guard let commit = actionTargetCommit() else { return }
+        copyToPasteboard(commit.sha)
+    }
+
+    @objc private func copyShortSha(_ sender: Any?) {
+        guard let commit = actionTargetCommit() else { return }
+        copyToPasteboard(commit.shortSha)
+    }
+
+    @objc private func copySummary(_ sender: Any?) {
+        guard let commit = actionTargetCommit() else { return }
+        copyToPasteboard(commit.summary)
+    }
+
+    @objc private func copyCheckoutCommand(_ sender: Any?) {
+        guard let commit = actionTargetCommit() else { return }
+        copyToPasteboard("git checkout \(commit.shortSha)")
+    }
+
+    @objc private func rowDoubleClicked(_ sender: Any?) {
+        let row = tableView.clickedRow
+        guard row >= 0 else { return }
+        showDetailPopover(forRow: row)
+    }
+
+    @objc private func showDetailsForClickedRow(_ sender: Any?) {
+        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        guard row >= 0 else { return }
+        showDetailPopover(forRow: row)
+    }
+
+    private func showDetailPopover(forRow row: Int) {
+        guard row >= 0, row < filtered.count else { return }
+        let commit = filtered[row]
+
+        detailPopover?.close()
+
+        let scroll = NSTextView.scrollableTextView()
+        guard let textView = scroll.documentView as? NSTextView else { return }
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.textContainerInset = NSSize(width: 8, height: 8)
+        textView.string = "Loading commit \(commit.shortSha)…"
+        scroll.frame = NSRect(x: 0, y: 0, width: 560, height: 340)
+
+        let vc = NSViewController()
+        vc.view = scroll
+
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = vc
+        popover.contentSize = scroll.frame.size
+
+        let rowRect = tableView.rect(ofRow: row)
+        popover.show(relativeTo: rowRect, of: tableView, preferredEdge: .maxY)
+        detailPopover = popover
+        detailTextView = textView
+
+        MomentermGitGraphPoller.shared.commitDetail(cwd: currentCwd, sha: commit.sha) { [weak self] text in
+            self?.detailTextView?.string = text
+        }
+    }
+
     // MARK: - Data
 
     @objc private func graphUpdated(_ note: Notification) {
         guard let cwd = note.userInfo?["cwd"] as? String, cwd == currentCwd else { return }
+        let abbreviated = (cwd as NSString).abbreviatingWithTildeInPath
+        if let isRepo = note.userInfo?["isGitRepo"] as? Bool, !isRepo {
+            cwdLabel.stringValue = "\(abbreviated) — not a git repository"
+        } else {
+            cwdLabel.stringValue = abbreviated
+        }
         commits = MomentermGitGraphPoller.shared.commits(forCwd: cwd)
         applyFilter()
     }
@@ -237,7 +368,7 @@ final class MomentermGitGraphPanelVC: NSViewController, NSTableViewDataSource, N
                 if c.summary.lowercased().contains(q) { return true }
                 if c.author.lowercased().contains(q) { return true }
                 if c.shortSha.lowercased().contains(q) { return true }
-                if c.refs.contains(where: { $0.lowercased().contains(q) }) { return true }
+                if c.refInfos.contains(where: { $0.name.lowercased().contains(q) }) { return true }
                 return false
             }
         }
@@ -360,7 +491,7 @@ private final class PanelDescriptionCellView: NSTableCellView {
 
     func configure(commit: MomentermGitCommit) {
         for v in stack.arrangedSubviews { stack.removeArrangedSubview(v); v.removeFromSuperview() }
-        for ref in commit.refs.prefix(3) {
+        for ref in commit.refInfos.prefix(3) {
             stack.addArrangedSubview(PanelRefPill(ref: ref))
         }
         let summary = NSTextField(labelWithString: commit.summary)
@@ -374,16 +505,24 @@ private final class PanelDescriptionCellView: NSTableCellView {
 }
 
 private final class PanelRefPill: NSView {
-    init(ref: String) {
+    init(ref: MomentermGitRefInfo) {
         super.init(frame: .zero)
         wantsLayer = true
-        let isHEAD = ref.contains("HEAD")
-        let display = ref.replacingOccurrences(of: "HEAD -> ", with: "")
-        let color: NSColor = isHEAD ? .controlAccentColor : .systemYellow
+        let color: NSColor
+        switch ref.kind {
+        case .head:
+            color = .controlAccentColor
+        case .localBranch:
+            color = .systemGreen
+        case .remoteBranch:
+            color = .systemBlue
+        case .tag:
+            color = .systemOrange
+        }
         layer?.cornerRadius = 3
         layer?.backgroundColor = color.withAlphaComponent(0.18).cgColor
 
-        let label = NSTextField(labelWithString: display)
+        let label = NSTextField(labelWithString: ref.name)
         label.translatesAutoresizingMaskIntoConstraints = false
         label.font = .systemFont(ofSize: 9, weight: .medium)
         label.textColor = color
