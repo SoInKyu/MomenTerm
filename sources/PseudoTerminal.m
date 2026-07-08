@@ -9477,7 +9477,7 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
 
 - (void)turnOnMetalCaptureInInfoPlist {
     const iTermWarningSelection selection =
-    [iTermWarning showWarningWithTitle:@"You must restart iTerm2 to turn on this feature."
+    [iTermWarning showWarningWithTitle:@"You must restart MomenTerm to turn on this feature."
                                actions:@[ @"Restart Now", @"Cancel"]
                             identifier:@"RestartAfterMetalCaptureEnabled"
                            silenceable:kiTermWarningTypePersistent
@@ -12463,7 +12463,7 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
                                                                 locale:[NSLocale currentLocale]];
 
     NSDate *now = [NSDate date];
-    NSString *suggestedFilename = [NSString stringWithFormat:@"iTerm2 Session %@ at %@.txt",
+    NSString *suggestedFilename = [NSString stringWithFormat:@"MomenTerm Session %@ at %@.txt",
                                    [dateFormatter stringFromDate:now],
                                    [timeFormatter stringFromDate:now]];
 

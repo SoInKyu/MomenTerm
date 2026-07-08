@@ -415,20 +415,20 @@ withApplicationAtURL:appURL
         case iTermOpenStyleWindow:
         case iTermOpenStyleTab:
             if (isFileURL) {
-                selection = [iTermWarning showWarningWithTitle:@"iTerm2 can display files like this in its built-in web browser! Would you like to open this link in iTerm2?"
-                                                      actions:@[ @"Use Default App", @"Open in iTerm2", @"Cancel"]
+                selection = [iTermWarning showWarningWithTitle:@"MomenTerm can display files like this in its built-in web browser! Would you like to open this link in MomenTerm?"
+                                                      actions:@[ @"Use Default App", @"Open in MomenTerm", @"Cancel"]
                                                     accessory:nil
                                                    identifier:identifier
                                                   silenceable:kiTermWarningTypePermanentlySilenceable
-                                                      heading:@"Open in iTerm2?"
+                                                      heading:@"Open in MomenTerm?"
                                                        window:window];
             } else {
-                selection = [iTermWarning showWarningWithTitle:@"iTerm2 can display web pages! Would you like to open this link in iTerm2?"
-                                                      actions:@[ @"Use Default Browser", @"Open in iTerm2", @"Cancel"]
+                selection = [iTermWarning showWarningWithTitle:@"MomenTerm can display web pages! Would you like to open this link in MomenTerm?"
+                                                      actions:@[ @"Use Default Browser", @"Open in MomenTerm", @"Cancel"]
                                                     accessory:nil
                                                    identifier:identifier
                                                   silenceable:kiTermWarningTypePermanentlySilenceable
-                                                      heading:@"Open in iTerm2?"
+                                                      heading:@"Open in MomenTerm?"
                                                        window:window];
             }
             break;

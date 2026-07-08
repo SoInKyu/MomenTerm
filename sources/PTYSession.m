@@ -3107,7 +3107,7 @@ webViewConfiguration:(WKWebViewConfiguration *)webViewConfiguration
                 if (count > 0) {
                     return;
                 }
-                const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:@"A browser session failed to start because the iTerm2 Browser Plugin couldn’t be found."
+                const iTermWarningSelection selection = [iTermWarning showWarningWithTitle:@"A browser session failed to start because the MomenTerm Browser Plugin couldn’t be found."
                                            actions:@[ @"Download", @"Cancel" ]
                                          accessory:nil
                                         identifier:nil
@@ -9974,7 +9974,7 @@ typedef NS_ENUM(NSUInteger, PTYSessionTmuxReport) {
         actions = @[ @"OK" ];
     }
     const iTermWarningSelection selection =
-    [iTermWarning showWarningWithTitle:@"This instance of iTerm2 is already attached to this session"
+    [iTermWarning showWarningWithTitle:@"This instance of MomenTerm is already attached to this session"
                                actions:actions
                              accessory:nil
                             identifier:@"AlreadyAttachedToTmuxSession"
@@ -15166,7 +15166,7 @@ typedef NS_ENUM(NSUInteger, PTYSessionTmuxReport) {
         NSString *identifier = @"UploadInUnsupportedFormatRequested";
         if (![self announcementWithIdentifier:identifier]) {
             iTermAnnouncementViewController *announcement =
-            [iTermAnnouncementViewController announcementWithTitle:@"An upload with an unsupported archive format was requested. You may need a newer version of iTerm2."
+            [iTermAnnouncementViewController announcementWithTitle:@"An upload with an unsupported archive format was requested. You may need a newer version of MomenTerm."
                                                              style:kiTermAnnouncementViewStyleWarning
                                                        withActions:@[]
                                                         completion:^(int selection) {}];

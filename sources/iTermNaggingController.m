@@ -841,7 +841,7 @@ static NSString *const iTermNaggingControllerClaudeCodeStatusToolDismissedNotifi
 }
 
 - (void)showJSONPromotion {
-    [_delegate naggingControllerShowMessage:@"That's a gnarly JSON blob you've got there! iTerm2 can replace this hard-to-read selection with a pretty-printed value."
+    [_delegate naggingControllerShowMessage:@"That's a gnarly JSON blob you've got there! MomenTerm can replace this hard-to-read selection with a pretty-printed value."
                                  isQuestion:NO
                                   important:NO
                                  identifier:@"JSONPromotion"
@@ -1031,7 +1031,7 @@ static NSString *const iTermNaggingControllerTouchIDForSudoUserDefaultsKey = @"N
     if (![self.delegate naggingControllerCanShowMessageWithIdentifier:iTermNaggingControllerClaudeCodeStatusToolIdentifier]) {
         return;
     }
-    NSString *message = @"Want to try iTerm2’s Claude Code integration?";
+    NSString *message = @"Want to try MomenTerm’s Claude Code integration?";
     [self.delegate naggingControllerShowMessage:message
                                      isQuestion:YES
                                       important:NO

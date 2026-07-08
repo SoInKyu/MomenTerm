@@ -111,7 +111,7 @@
 
         NSAlert *alert = [[NSAlert alloc] init];
         alert.messageText = @"Manual Update Needed";
-        alert.informativeText = @"iTerm2's Application Support directory has changed.\n\n"
+        alert.informativeText = @"MomenTerm's Application Support directory has changed.\n\n"
         @"Previously, both these directories were supported:\n~/Library/Application Support/iTerm\n~/Library/Application Support/iTerm2.\n\n"
             @"Now, only the iTerm2 version is supported. But you have files in both so please move everything from iTerm to iTerm2.";
 
