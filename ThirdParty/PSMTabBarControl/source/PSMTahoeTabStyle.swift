@@ -829,13 +829,13 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         backgroundColorSelected(selected, highlightAmount: isHighlighted ? 1.0 : 0.0).set()
 
         // MomenTerm: 활성 탭 + tabColor 가 있으면 pill 대신 바 전체 높이의 사각형을
-        // cellFrame.x/width 자리에 그려 셀 슬롯을 빈틈없이 네온 그린으로 덮음.
-        // cellFrame.height 는 generic.height-1 이라 1pt 부족 + 풀스크린 등 insets 손실까지
-        // 보강하기 위해 y=0..tabBarHeight 로 명시 확장. 비활성 탭은 기존 Tahoe pill 유지.
-        let fullFill = selected && tabColor != nil
+        // 셀 슬롯 자리에 그려 빈틈없이 네온 그린으로 덮음. cellFrame 그대로 쓰면
+        // intercellSpacing(1pt) 이음새와 첫/마지막 셀 밖 바 마진에 회색 배경이
+        // 새어 보이므로 fullFillSlotRect 로 슬롯 경계까지 확장. 비활성 탭은 기존 Tahoe pill 유지.
+        let fullFill = selected && tabColor != nil && horizontal
         let radius: CGFloat = fullFill ? 0 : (barRadius - 2.5)
         let rect: NSRect = fullFill
-            ? NSRect(x: cellFrame.minX, y: 0, width: cellFrame.width, height: tabBarHeight)
+            ? fullFillSlotRect(for: cellFrame)
             : backgroundRect(for: cellFrame)
         let path = NSBezierPath(roundedRect: rect, xRadius: radius, yRadius: radius)
         path.fill()
@@ -856,6 +856,28 @@ class PSMTahoeTabStyle: NSObject, PSMTabStyle {
         }
     }
     
+    // MomenTerm: 활성 그린 셀이 덮어야 하는 슬롯 사각형(수평 배치 전용).
+    // 좌우로 intercellSpacing(1pt) 이음새를 흡수하고, 첫/마지막 셀이면 바 가장자리까지
+    // 확장해 회색 pill 배경이 셀 옆으로 새어 보이지 않게 한다. 오른쪽 확장은
+    // drawTabBar 의 셀 단계 클립(backgroundRect)이 add-tab 버튼 영역 앞에서 잘라준다.
+    // 상하는 cellFrame.height 의 1pt 손실 및 insets 편차를 무시하고 바 전체(0..tabBarHeight).
+    private func fullFillSlotRect(for cellFrame: NSRect) -> NSRect {
+        var minX = cellFrame.minX - intercellSpacing
+        var maxX = cellFrame.maxX + intercellSpacing
+        let otherFrames = ((tabBar?.cells() as? [PSMTabBarCell]) ?? [])
+            .filter { !$0.isInOverflowMenu && $0.frame.width > 1 }
+            .map { $0.frame }
+        let hasCellToTheLeft = otherFrames.contains { $0.minX < cellFrame.minX - 0.5 }
+        let hasCellToTheRight = otherFrames.contains { $0.minX > cellFrame.minX + 0.5 }
+        if !hasCellToTheLeft {
+            minX = 0
+        }
+        if !hasCellToTheRight, let barWidth = tabBar?.frame.width {
+            maxX = barWidth
+        }
+        return NSRect(x: minX, y: 0, width: maxX - minX, height: tabBarHeight)
+    }
+
     func drawCellOutline(path: NSBezierPath, rect: NSRect, radius: CGFloat) {
         Self.outlineColor.set()
         path.stroke()
