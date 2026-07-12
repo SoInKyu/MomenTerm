@@ -182,7 +182,7 @@ fi
 # Auto-install keys (autocheck/interval/autoupdate) must also be present so
 # friends on v0.9.2+ get background updates without a dialog.
 echo "[release] verifying Info.plist sparkle keys..."
-EXPECT_KEY="zhZBg6HvG2DqeH4pTnwqnC+0Ti4euC4tvDqawrn43pw="
+EXPECT_KEY="AkjDcJj5Oe2OCmr3wdGiGKzwUslYE0BlQpWrz2VW2IQ="
 EXPECT_FEED="https://github.com/$REPO_SLUG/releases/latest/download/appcast.xml"
 EXPECT_AUTOCHECK="true"
 EXPECT_INTERVAL="3600"
