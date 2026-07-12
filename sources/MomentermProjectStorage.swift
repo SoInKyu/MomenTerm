@@ -47,7 +47,19 @@ final class MomentermProjectStorage {
             }
 
             let data = try Data(contentsOf: storageURL)
-            let store = try decoder.decode(MomentermProjectStore.self, from: data)
+            var store = try decoder.decode(MomentermProjectStore.self, from: data)
+            // Heal any duplicate project entries that predate the path-based dedup
+            // in addProject (same folder added twice under different UUIDs).
+            var changed = false
+            for i in store.spaces.indices {
+                if store.spaces[i].deduplicateProjects() {
+                    changed = true
+                }
+            }
+            if changed {
+                save(store)
+                return store
+            }
             _store = store
             return store
         } catch {

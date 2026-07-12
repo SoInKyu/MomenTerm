@@ -160,6 +160,13 @@ struct MomentermProject: Codable, Identifiable {
         return FileManager.default.fileExists(atPath: path, isDirectory: &isDir) && isDir.boolValue
     }
 
+    /// A project is identified by its directory, so compare on a standardized path
+    /// (resolves ~, .., and trailing slashes) rather than the raw string. Used to
+    /// prevent adding the same folder twice under different UUIDs.
+    var normalizedPath: String {
+        (path as NSString).standardizingPath
+    }
+
     /// Build the shell command to open this project
     func buildOpenCommand() -> String {
         var parts: [String] = ["cd \"\(path)\""]
@@ -194,8 +201,26 @@ struct MomentermProjectSpace: Codable, Identifiable {
     }
 
     mutating func addProject(_ project: MomentermProject) {
-        guard !projects.contains(where: { $0.id == project.id }) else { return }
+        // Dedup by directory, not just id: a re-added folder always carries a fresh
+        // UUID, so an id-only check never catches it and the sidebar shows duplicates.
+        let incoming = project.normalizedPath
+        guard !projects.contains(where: { $0.id == project.id || $0.normalizedPath == incoming }) else { return }
         projects.append(project)
+    }
+
+    /// Collapse projects that point at the same directory, keeping the first
+    /// occurrence. Returns true if anything was removed.
+    mutating func deduplicateProjects() -> Bool {
+        var seen = Set<String>()
+        var deduped: [MomentermProject] = []
+        for project in projects {
+            if seen.insert(project.normalizedPath).inserted {
+                deduped.append(project)
+            }
+        }
+        guard deduped.count != projects.count else { return false }
+        projects = deduped
+        return true
     }
 
     mutating func removeProject(withId id: String) {
