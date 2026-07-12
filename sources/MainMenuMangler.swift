@@ -44,6 +44,8 @@ class MainMenuMangler: NSObject {
         "Make MomenTerm Default Term": "star.fill",
         "Make Terminal Default Term": "star",
         "Install Shell Integration": "square.and.arrow.down.fill",
+        "Install Claude Code Integration": "sparkles",
+        "Project Manager": "folder.badge.gearshape",
         "Remove Recent Profiles from Dock Menu": "person.fill.xmark",
         "About MomenTerm": "info.circle.fill",
         "Quit MomenTerm": "power",
