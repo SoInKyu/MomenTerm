@@ -20,6 +20,17 @@ MT 요구사항 문서 기반 전체 구현 — Phase 1~4 완료, Phase 5~7 골�
 - `make run` 은 앱 종료 시 래퍼가 exit 1/144 로 끝나지만 이는 크래시 아님(정상 종료/pkill). 빌드 성공 판정은 “** BUILD SUCCEEDED **” 마커 기준.
 - 안전 백업 `~/.momenterm/projects.json.bak` 생성됨(dedup 검증용, 불필요 시 삭제 가능).
 
+### 릴리스 v0.9.14 컷 + Sparkle 서명키 로테이션 (★ 다음 세션 필독)
+- **v0.9.14 GitHub 릴리스 게시 완료**: https://github.com/SoInKyu/MomenTerm/releases/tag/momenterm-v0.9.14 (서명 zip + appcast). 태그·origin/main·배포 바이너리 모두 커밋 `4c0fb7748` 로 정합. 15개 로컬 커밋 origin/main push 완료.
+- **Sparkle 서명키가 로테이션됨** (commit 4c0fb7748):
+  - 기존 개인키(공개키 `zhZBg6HvG2DqeH4pTnwqnC+0Ti4euC4tvDqawrn43pw=`)가 **이 개발 PC 키체인에 부재** → 서명 불가였음. 이전 릴리스(v0.9.0~0.9.12)는 다른 머신에서 컷된 것으로 추정.
+  - `build/sparkle-tools/generate_keys` 로 **이 PC에 신규 ed25519 키 생성**(macOS 로그인 키체인 저장, service `https://sparkle-project.org`).
+  - 신뢰 공개키를 **`AkjDcJj5Oe2OCmr3wdGiGKzwUslYE0BlQpWrz2VW2IQ=`** 로 교체 — `plists/release-iTerm2.plist` SUPublicEDKey + `tools/release.sh` EXPECT_KEY.
+- **파급**: 신규 설치/새 키 이후 사용자는 자동 업데이트 정상. **v0.9.13 이하 기존 사용자는 v0.9.14 자동 업데이트를 거부 → 1회 수동 재설치 필요**(앱만 삭제, 설정·`~/.momenterm/` 보존). 사용자 공지 준비 권장.
+- **운영 규칙(중요)**: 앞으로 릴리스는 **신규 키를 가진 이 PC에서** `tools/release.sh <버전>` 을 **대화식으로** 실행할 것(서명 시 키체인 GUI 승인 프롬프트 때문에 백그라운드/파이프 실행은 “signing zip”에서 멈춤). `make run` 등 outer 파이프에 pipefail 없어 exit 0 이어도 게시 안 됐을 수 있으니 항상 GitHub 릴리스 실물로 검증.
+- **키 부재 재발 방지**: 원본 `zhZBg6…` 키를 되찾으면 로테이션을 되돌릴 수 있으나 그 경우 또 사용자 재설치가 발생. 신규 키(`AkjDcJj5…`)의 백업(export)을 안전한 곳에 보관할 것.
+- 참고: `momenterm-v0.9.13` 은 2026-05-19 에 이미 존재하던 릴리스(태그→bc1981f11)라 이번엔 0.9.14 로 진행.
+
 ## 추가 완료 (2026-07-08 세션)
 - [x] iTerm2 → MomenTerm 사용자 노출 문구 일관성 정리 (26 파일) — 알림/프롬프트/설정 설명/Tip 본문의 제품명, 버그 신고 URL → GitHub issues. 프로토콜 식별자·실경로·업스트림 문서 URL 은 보존 (commit b0bfdd27a)
 - [x] 터미널 창 자유 리사이즈 기본화 — disableWindowSizeSnap 기본값 YES (commit 167d26b99)
@@ -32,7 +43,7 @@ MT 요구사항 문서 기반 전체 구현 — Phase 1~4 완료, Phase 5~7 골�
 - [x] ~~iTerm2ImportStatus 헬퍼 앱 메뉴 브랜딩~~ — 사용자 노출 문구 정리 완료(commit 937446ac3). 단 아래 “전체 앱 개명” 은 여전히 별도 스코프로 미결
 - [ ] iTerm2ImportStatus **전체 앱 개명** — 타겟명/PRODUCT_NAME/`.app` 파일명/ImportExport.swift:211 실경로까지 변경하는 큰 스코프. 이번엔 표시명(DisplayName)만 정리, 실체명은 보존
 - [ ] beta/dev/nightly/preview plist 의 SUFeedURL 이 여전히 iterm2.com (릴리스 채널 미사용이라 보류)
-- [ ] release.sh 0.9.13 cut (스티커 커밋 bc1981f11 이후 누적분 포함) — 2026-07-12 수정 4건(9b79e65a5, 06d729915, 3583a9d31, 937446ac3) 포함
+- [x] ~~release.sh cut~~ — **v0.9.14 게시 완료**(2026-07-12, commit 4c0fb7748). 스티커 커밋 이후 누적 + 이번 세션 수정 4건 + 키 로테이션 포함. 위 “릴리스 v0.9.14 컷 + 키 로테이션” 섹션 참고
 - [ ] Git Graph: 실 repo 에서 브랜치 다수/머지 커밋 있는 멀티레인 렌더 확인(이번 검증 repo 는 선형 히스토리라 단일 레인만 관찰)
 
 ## 최근 완료
