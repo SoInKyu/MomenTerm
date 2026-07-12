@@ -36,8 +36,8 @@ struct MomentermGitRefInfo: Equatable {
     let kind: MomentermGitRefKind
 
     /// Classify one `%D` decoration produced with --decorate=full, e.g.
-    /// “HEAD -> refs/heads/main”, “refs/remotes/origin/main”, “refs/tags/v1.0”,
-    /// or a bare “HEAD” when detached.
+    /// “HEAD -> refs/heads/main”, “refs/remotes/origin/main”,
+    /// “tag: refs/tags/v1.0”, or a bare “HEAD” when detached.
     static func from(decoration: String) -> MomentermGitRefInfo {
         var s = decoration
         var isHEAD = false
@@ -47,6 +47,16 @@ struct MomentermGitRefInfo: Equatable {
         if s.hasPrefix("HEAD -> ") {
             isHEAD = true
             s = String(s.dropFirst("HEAD -> ".count))
+        }
+        // git prefixes tag decorations with “tag: ” even under --decorate=full,
+        // e.g. “tag: refs/tags/v1.0”. Strip it (and the refs/tags/ prefix) so tags
+        // are classified as .tag rather than falling through to the branch default.
+        if s.hasPrefix("tag: ") {
+            s = String(s.dropFirst("tag: ".count))
+            if s.hasPrefix("refs/tags/") {
+                s = String(s.dropFirst("refs/tags/".count))
+            }
+            return MomentermGitRefInfo(name: s, kind: .tag)
         }
         if s.hasPrefix("refs/heads/") {
             return MomentermGitRefInfo(name: String(s.dropFirst("refs/heads/".count)),
