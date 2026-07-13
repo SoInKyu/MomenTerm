@@ -251,6 +251,7 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     MomentermGitGraphPanelDelegate,
     MomentermFileEditorPanelDelegate,
     MomentermBottomStripDelegate,
+    MomentermPairSessionDelegate,
     NSComboBoxDelegate,
     NSFontChanging,
     NSMenuItemValidation,
@@ -455,6 +456,11 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     // MomenTerm: full-width bottom strip with inline-panel toggle buttons
     MomentermBottomStripView *_momentermBottomStripView;
     NSTimer *_momentermAttentionTimer;
+
+    // MomenTerm: Codex ⇄ Claude pairing (editor↔reviewer relay) + grouping UI
+    MomentermPairSession *_momentermPairSession;
+    MomentermPairBorderView *_momentermPairEditorBorder;
+    MomentermPairBorderView *_momentermPairReviewerBorder;
 
     // MomenTerm: floating windows that host the inline panels when detached
     NSWindow *_momentermGitGraphDetachedWindow;
@@ -1472,6 +1478,135 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [_momentermSidebarVC launchAIToolForCurrentSelection:MomentermAIToolGemini];
 }
 
+// MARK: - MomenTerm AI pairing (Codex ⇄ Claude)
+
+// The bottom-strip pair affordance is a toggle: start a relay if none is
+// running, otherwise stop the live one (the user's only in-loop control).
+- (void)momentermBottomStripDidTapPair {
+    if (_momentermPairSession && _momentermPairSession.isRunning) {
+        [self momentermStopPairSession:nil];
+    } else {
+        [self momentermStartPairSession:nil];
+    }
+}
+
+- (void)momentermStartPairSession:(id)sender {
+    // Bottom-strip toggle: the current pane is already a live shell, so the
+    // CLIs can be written immediately (no boot delay).
+    [self momentermStartPairSessionWithEditor:[self currentSession] bootDelay:0];
+}
+
+// Shared pairing entry point. `editor` becomes the Claude (editing) pane; a
+// vertical split is created for the Codex (reviewing) pane. `bootDelay` gives a
+// freshly-launched editor shell time to reach its first prompt before the CLIs
+// are written — 0 when the editor is already an interactive shell.
+- (void)momentermStartPairSessionWithEditor:(PTYSession *)editor
+                                   bootDelay:(NSTimeInterval)bootDelay {
+    // Clear any prior pairing UI/state before starting fresh.
+    [self momentermTeardownPairBorders];
+    [_momentermPairSession stop];
+    [_momentermPairSession release];
+    _momentermPairSession = nil;
+
+    if (!editor) {
+        NSBeep();
+        return;
+    }
+    // Split the editor pane to host the reviewer; wire everything up once the
+    // new session is ready.
+    [self asyncSplitVertically:YES
+                        before:NO
+                       profile:[self profileForSplittingCurrentSession]
+                 targetSession:editor
+                    completion:nil
+                         ready:^(PTYSession *reviewer, BOOL ok) {
+        if (!ok || !reviewer) {
+            NSBeep();
+            return;
+        }
+        if (bootDelay > 0) {
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(bootDelay * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                [self momentermBeginPairWithEditor:editor reviewer:reviewer];
+            });
+        } else {
+            [self momentermBeginPairWithEditor:editor reviewer:reviewer];
+        }
+    }];
+}
+
+- (void)momentermBeginPairWithEditor:(PTYSession *)editor reviewer:(PTYSession *)reviewer {
+    // Launch the two CLIs: editor = claude (edits), reviewer = codex (reviews).
+    [editor writeTask:@"claude --dangerously-skip-permissions\n"];
+    [reviewer writeTask:@"codex\n"];
+
+    // Neon grouping borders + turn-direction pills.
+    _momentermPairEditorBorder = [[MomentermPairBorderView alloc] initWithRole:MomentermPairRoleEditor];
+    _momentermPairReviewerBorder = [[MomentermPairBorderView alloc] initWithRole:MomentermPairRoleReviewer];
+    [_momentermPairEditorBorder attachTo:editor.view];
+    [_momentermPairReviewerBorder attachTo:reviewer.view];
+
+    // Orchestrator. There is no seed sheet: the user types the task straight
+    // into the editor (claude) pane, and the orchestrator opens the review
+    // relay once the editor's first turn ends.
+    _momentermPairSession = [[MomentermPairSession alloc] init];
+    _momentermPairSession.delegate = self;
+    [_momentermPairSession startWithEditor:editor reviewer:reviewer];
+}
+
+- (void)momentermStopPairSession:(id)sender {
+    // stop() drives the finish delegate (stoppedByUser), which paints the
+    // completion borders and releases the orchestrator.
+    [_momentermPairSession stop];
+}
+
+- (void)momentermTeardownPairBorders {
+    [_momentermPairEditorBorder detach];
+    [_momentermPairEditorBorder release];
+    _momentermPairEditorBorder = nil;
+    [_momentermPairReviewerBorder detach];
+    [_momentermPairReviewerBorder release];
+    _momentermPairReviewerBorder = nil;
+}
+
+// MARK: - MomentermPairSessionDelegate
+
+- (void)pairSession:(MomentermPairSession *)session
+    activeSpeakerDidChange:(MomentermPairRole)role {
+    const BOOL editorActive = (role == MomentermPairRoleEditor);
+    [_momentermPairEditorBorder setActive:editorActive];
+    [_momentermPairReviewerBorder setActive:!editorActive];
+}
+
+- (void)pairSession:(MomentermPairSession *)session
+       didFinishWith:(MomentermPairOutcome)outcome
+          roundCount:(NSInteger)roundCount {
+    NSString *text = @"";
+    NSColor *color = [NSColor systemGrayColor];
+    switch (outcome) {
+        case MomentermPairOutcomeApproved:
+            text = [NSString stringWithFormat:@"승인됨 (%ld라운드)", (long)roundCount];
+            color = [NSColor systemGreenColor];
+            break;
+        case MomentermPairOutcomeRoundCapReached:
+            text = [NSString stringWithFormat:@"라운드 상한 도달 (%ld)", (long)roundCount];
+            color = [NSColor systemOrangeColor];
+            break;
+        case MomentermPairOutcomeStoppedByUser:
+            text = @"정지됨";
+            color = [NSColor systemGrayColor];
+            break;
+        case MomentermPairOutcomeSessionDied:
+            text = @"세션 종료";
+            color = [NSColor systemRedColor];
+            break;
+    }
+    [_momentermPairEditorBorder showCompletionWithText:text color:color];
+    [_momentermPairReviewerBorder showCompletionWithText:text color:color];
+    [_momentermPairSession release];
+    _momentermPairSession = nil;
+}
+
 // 1 Hz tick — for each session in this window, lights the per-pane attention
 // strip when (a) the PTY has been quiet for at least kMomentermIdleThreshold
 // AND (b) the recent screen tail matches a known "waiting for user input" UI
@@ -1727,7 +1862,8 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
                                  projectName:(NSString *)projectName
                                    projectId:(NSString *)projectId
                                     inNewTab:(BOOL)inNewTab
-                                   aiCommand:(nullable NSString *)aiCommand {
+                                   aiCommand:(nullable NSString *)aiCommand
+                             startEditReview:(BOOL)startEditReview {
     Profile *profile = [self it_momentermProfileForPath:path spaceName:spaceName];
     // Set the tab/session title to the project name.
     if (projectName.length > 0) {
@@ -1762,12 +1898,20 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
                                                      parent:nil
                                                  completion:nil];
         registerSession(newSession);
+        if (startEditReview) {
+            // The tab opened as an empty shell (aiCommand was nil for pairing);
+            // boot the Claude editor + Codex reviewer once the shells settle.
+            [self momentermStartPairSessionWithEditor:newSession bootDelay:0.7];
+        }
     } else {
         [iTermSessionLauncher launchBookmark:profile
                                   inTerminal:nil
                           respectTabbingMode:NO
                                   completion:^(PTYSession * _Nullable session) {
             registerSession(session);
+            if (startEditReview && session) {
+                [self momentermStartPairSessionWithEditor:session bootDelay:0.7];
+            }
         }];
     }
 }
@@ -1947,6 +2091,12 @@ ITERM_WEAKLY_REFERENCEABLE
     // Do not assume that [self window] is valid here. It may have been freed.
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
+
+    // MomenTerm: tear down any live pairing relay + grouping borders.
+    [_momentermPairSession stop];
+    [_momentermPairSession release];
+    _momentermPairSession = nil;
+    [self momentermTeardownPairBorders];
 
     // Release all our sessions.
     if (_contentView.tabBarControl.delegate == self) {

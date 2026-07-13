@@ -21,6 +21,7 @@ protocol MomentermBottomStripDelegate: AnyObject {
     @objc optional func momentermBottomStripDidTapClaude()
     @objc optional func momentermBottomStripDidTapCodex()
     @objc optional func momentermBottomStripDidTapGemini()
+    @objc optional func momentermBottomStripDidTapPair()
 }
 
 @objc(MomentermBottomStripStatus)
@@ -101,6 +102,7 @@ final class MomentermBottomStripView: NSView {
     private let claudeButton = NSButton()
     private let codexButton = NSButton()
     private let geminiButton = NSButton()
+    private let pairButton = NSButton()
     private let gitGraphIconButton = NSButton()
     private let showsToolButtons: Bool
     private let baseVersionText: String
@@ -215,6 +217,12 @@ final class MomentermBottomStripView: NSView {
                               selector: #selector(geminiIconTapped))
         addSubview(geminiButton)
 
+        configureSymbolIconButton(pairButton,
+                                  symbol: "person.2",
+                                  title: "AI 페어링 (Codex ⇄ Claude) — 다시 눌러 정지",
+                                  selector: #selector(pairIconTapped))
+        addSubview(pairButton)
+
         gitGraphIconButton.isBordered = false
         gitGraphIconButton.imagePosition = .imageOnly
         gitGraphIconButton.imageScaling = .scaleProportionallyDown
@@ -311,6 +319,8 @@ final class MomentermBottomStripView: NSView {
         var rx = w - rightMargin - iconSize
         gitGraphIconButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
         rx -= iconSize + iconGap
+        pairButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
+        rx -= iconSize + iconGap
         geminiButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
         rx -= iconSize + iconGap
         codexButton.frame = NSRect(x: rx, y: iconY, width: iconSize, height: iconSize)
@@ -377,5 +387,8 @@ final class MomentermBottomStripView: NSView {
     }
     @objc private func geminiIconTapped() {
         delegate?.momentermBottomStripDidTapGemini?()
+    }
+    @objc private func pairIconTapped() {
+        delegate?.momentermBottomStripDidTapPair?()
     }
 }

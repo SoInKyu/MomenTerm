@@ -129,12 +129,14 @@ import AppKit
                                       projectName: String,
                                       projectId: String,
                                       inNewTab: Bool,
-                                      aiCommand: String?) {
+                                      aiCommand: String?,
+                                      startEditReview: Bool) {
         launchProjectTerminal(path: path,
                               spaceName: spaceName,
                               projectName: projectName,
                               projectId: projectId,
-                              aiCommand: aiCommand)
+                              aiCommand: aiCommand,
+                              startEditReview: startEditReview)
     }
 
     func sidebarDidRequestActivateExistingSession(projectId: String) -> Bool {
@@ -164,7 +166,8 @@ import AppKit
                                        spaceName: String,
                                        projectName: String,
                                        projectId: String,
-                                       aiCommand: String?) {
+                                       aiCommand: String?,
+                                       startEditReview: Bool = false) {
         var profile: [AnyHashable: Any] = iTermController.sharedInstance().defaultBookmark() ?? [:]
         profile[KEY_CUSTOM_DIRECTORY] = kProfilePreferenceInitialDirectoryCustomValue
         // macOS returns NSOpenPanel + filesystem paths in NFD (decomposed)
@@ -222,6 +225,13 @@ import AppKit
             // MomentermProjectRestorer.swift's launchBookmark callback.
             if let ai = aiCommand, !ai.isEmpty {
                 session.momentermInjectedCommand = ai
+            }
+            // Edit/review projects: the terminal opened as an empty shell, so
+            // ask the new terminal window to boot the Claude editor + Codex
+            // reviewer pairing. bootDelay lets the fresh shells reach a prompt.
+            if startEditReview,
+               let term = session.delegate?.realParentWindow() as? PseudoTerminal {
+                term.momentermStartPairSession(withEditor: session, bootDelay: 0.7)
             }
             self?.close()
         }

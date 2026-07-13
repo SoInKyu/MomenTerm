@@ -14,7 +14,11 @@ import AppKit
     /// Called when the user opens a project from the sidebar.
     /// `projectId` is the MomentermProject.id, used to register the newly-created
     /// session with MomentermSessionRegistry so it can be found later by single-click.
-    func sidebarDidRequestOpenProject(path: String, spaceName: String, projectName: String, projectId: String, inNewTab: Bool, aiCommand: String?)
+    /// `startEditReview` requests the two-pane pairing layout (Claude edits ⇄
+    /// Codex reviews) instead of a single terminal. When true the caller passes
+    /// `aiCommand: nil` — the pairing orchestrator boots claude itself, so a
+    /// non-nil command here would double-launch it.
+    func sidebarDidRequestOpenProject(path: String, spaceName: String, projectName: String, projectId: String, inNewTab: Bool, aiCommand: String?, startEditReview: Bool)
     /// Called when the user requests the file tree panel for a project.
     func sidebarDidRequestShowFileTree(path: String, projectName: String)
     /// Called when the user clicks a file inside an inline-expanded project
@@ -797,6 +801,11 @@ private struct DropTarget {
         }
         guard let item = item, case .project(let project, let space) = item else { return }
 
+        // Edit/review projects open the pairing layout; the orchestrator boots
+        // claude itself, so pass aiCommand: nil to avoid a double launch.
+        let editReview = project.launchMode == .editReview
+        let openCommand = editReview ? nil : project.aiLaunchCommand
+
         // In welcome-window context there is no existing terminal to tab into,
         // so skip the choice dialog and open directly. We still pass the
         // project's AI command — the dialog suppression is about UX (no
@@ -808,7 +817,8 @@ private struct DropTarget {
                                                          projectName: project.name,
                                                          projectId: project.id,
                                                          inNewTab: false,
-                                                         aiCommand: project.aiLaunchCommand)
+                                                         aiCommand: openCommand,
+                                                         startEditReview: editReview)
             return
         }
 
@@ -825,7 +835,8 @@ private struct DropTarget {
                                                      projectName: project.name,
                                                      projectId: project.id,
                                                      inNewTab: true,
-                                                     aiCommand: project.aiLaunchCommand)
+                                                     aiCommand: openCommand,
+                                                     startEditReview: editReview)
     }
 
     // MARK: - Settings Popover and Menu
@@ -915,7 +926,8 @@ private struct DropTarget {
                                                      projectName: project.name,
                                                      projectId: project.id,
                                                      inNewTab: true,
-                                                     aiCommand: project.aiLaunchCommand)
+                                                     aiCommand: project.aiLaunchCommand,
+                                                     startEditReview: false)
     }
 
     /// Picks the command string the ✨ Claude affordance should inject.
@@ -960,7 +972,8 @@ private struct DropTarget {
                                                      projectName: project.name,
                                                      projectId: project.id,
                                                      inNewTab: true,
-                                                     aiCommand: literal)
+                                                     aiCommand: literal,
+                                                     startEditReview: false)
     }
 
     private func resolveCommand(for tool: MomentermAITool) -> String {
@@ -2281,9 +2294,19 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         modelPopup.addItem(withTitle: "감지 대기 중…")
         modelPopup.isEnabled = false
 
+        let openModeLabel = NSTextField(labelWithString: "열기 방식")
+        openModeLabel.font = .systemFont(ofSize: 11)
+        openModeLabel.textColor = .secondaryLabelColor
+
+        let openModeSegment = NSSegmentedControl(labels: [MomentermProjectLaunchMode.single.displayName,
+                                                          MomentermProjectLaunchMode.editReview.displayName],
+                                                 trackingMode: .selectOne, target: nil, action: nil)
+        openModeSegment.selectedSegment = 0  // default: 단일
+
         let trampoline = AIToolPickerTrampoline(aiPopup: aiPopup, modelPopup: modelPopup, statusLabel: statusLabel)
         _retainedAITrampoline = trampoline
         trampoline.detect()
+        trampoline.attachOpenModeSegment(openModeSegment)
 
         // Manual frame layout (no Auto Layout — CLAUDE.md rule applies across all windows)
         // Layout bottom-up: y=0 is bottom of accessory view
@@ -2301,8 +2324,10 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         folderButton.frame = NSRect(x: 0,           y: buttonRowY, width: btnW, height: buttonH)
         cloneButton.frame  = NSRect(x: btnW + gap,  y: buttonRowY, width: btnW, height: buttonH)
         pathLabel.frame    = NSRect(x: 0, y: buttonRowY + buttonH + 8, width: w, height: 16)
+        openModeSegment.frame = NSRect(x: 0, y: buttonRowY + buttonH + 8 + 16 + 12, width: w, height: 24)
+        openModeLabel.frame   = NSRect(x: 0, y: buttonRowY + buttonH + 8 + 16 + 12 + 24 + 4, width: w, height: 16)
 
-        let accessoryH: CGFloat = buttonRowY + buttonH + 8 + 16 + 4
+        let accessoryH: CGFloat = buttonRowY + buttonH + 8 + 16 + 12 + 24 + 4 + 16 + 4
         let stack = NSView(frame: NSRect(x: 0, y: 0, width: w, height: accessoryH))
         stack.addSubview(modelPopup)
         stack.addSubview(modelLabel)
@@ -2313,6 +2338,8 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         stack.addSubview(folderButton)
         stack.addSubview(cloneButton)
         stack.addSubview(pathLabel)
+        stack.addSubview(openModeSegment)
+        stack.addSubview(openModeLabel)
 
         let alert = NSAlert()
         alert.messageText = "\u{201C}\(space.name)\u{201D}에 프로젝트 추가"
@@ -2401,6 +2428,7 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         let aiTool = trampoline.selectedTool()
         let backend = trampoline.selectedBackend()
         let model = trampoline.selectedModel()
+        let launchMode = trampoline.selectedLaunchMode()
         _retainedAITrampoline = nil
 
         // Resolve final project name + path based on which source mode was used.
@@ -2410,6 +2438,7 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
             var project = MomentermProject(name: projectName,
                                            path: source.folderPath,
                                            aiTool: aiTool)
+            project.launchMode = launchMode
             project.localLLMBackend = backend
             project.localLLMModel = model
             MomentermProjectStorage.shared.addProject(project, toSpace: space.id)
@@ -2423,6 +2452,7 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
                     var project = MomentermProject(name: projectName,
                                                    path: dest.path,
                                                    aiTool: aiTool)
+                    project.launchMode = launchMode
                     project.localLLMBackend = backend
                     project.localLLMModel = model
                     MomentermProjectStorage.shared.addProject(project, toSpace: space.id)
@@ -2529,9 +2559,19 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         modelPopup.addItem(withTitle: "감지 대기 중…")
         modelPopup.isEnabled = false
 
+        let openModeLabel = NSTextField(labelWithString: "열기 방식")
+        openModeLabel.font = .systemFont(ofSize: 11)
+        openModeLabel.textColor = .secondaryLabelColor
+
+        let openModeSegment = NSSegmentedControl(labels: [MomentermProjectLaunchMode.single.displayName,
+                                                          MomentermProjectLaunchMode.editReview.displayName],
+                                                 trackingMode: .selectOne, target: nil, action: nil)
+        openModeSegment.selectedSegment = (project.launchMode == .editReview) ? 1 : 0
+
         let trampoline = AIToolPickerTrampoline(aiPopup: aiPopup, modelPopup: modelPopup, statusLabel: statusLabel)
         _retainedAITrampoline = trampoline
         trampoline.detect(preselectModel: project.localLLMModel)
+        trampoline.attachOpenModeSegment(openModeSegment)
 
         let w: CGFloat = 260
         modelPopup.frame  = NSRect(x: 0, y: 0,   width: w, height: 24)
@@ -2543,8 +2583,10 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         pathLabel.frame   = NSRect(x: 0, y: 148, width: w, height: 16)
         nameField.frame   = NSRect(x: 0, y: 168, width: w, height: 24)
         nameLabel.frame   = NSRect(x: 0, y: 196, width: w, height: 16)
+        openModeSegment.frame = NSRect(x: 0, y: 224, width: w, height: 24)
+        openModeLabel.frame   = NSRect(x: 0, y: 252, width: w, height: 16)
 
-        let stack = NSView(frame: NSRect(x: 0, y: 0, width: w, height: 212))
+        let stack = NSView(frame: NSRect(x: 0, y: 0, width: w, height: 272))
         stack.addSubview(modelPopup)
         stack.addSubview(modelLabel)
         stack.addSubview(statusLabel)
@@ -2554,6 +2596,8 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         stack.addSubview(pathLabel)
         stack.addSubview(nameField)
         stack.addSubview(nameLabel)
+        stack.addSubview(openModeSegment)
+        stack.addSubview(openModeLabel)
 
         let openPanel = NSOpenPanel()
         openPanel.canChooseFiles = false
@@ -2602,6 +2646,7 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
         let aiTool = trampoline.selectedTool()
         let backend = trampoline.selectedBackend()
         let model = trampoline.selectedModel()
+        let launchMode = trampoline.selectedLaunchMode()
         _retainedAITrampoline = nil
 
         var s = MomentermProjectStorage.shared.load()
@@ -2610,6 +2655,7 @@ extension MomentermEmbeddedSidebarVC: NSMenuDelegate {
                 s.spaces[i].projects[j].name = name
                 s.spaces[i].projects[j].path = selectedPath
                 s.spaces[i].projects[j].aiTool = aiTool
+                s.spaces[i].projects[j].launchMode = launchMode
                 s.spaces[i].projects[j].localLLMBackend = backend
                 s.spaces[i].projects[j].localLLMModel = model
                 break
@@ -2675,6 +2721,13 @@ fileprivate final class AIToolPickerTrampoline: NSObject {
     let modelPopup: NSPopUpButton
     let statusLabel: NSTextField
     private var detected: MomentermLocalLLMStatus = .unavailable
+    /// Last LLM-detection line, so toggling out of edit/review restores it
+    /// instead of leaving the fixed-role hint text behind.
+    private var lastStatusText: String = "로컬 LLM 감지 중…"
+    /// Optional "열기 방식" (open mode) control. Segment 0 = 단일, 1 = 편집/검토.
+    /// When edit/review is selected the AI-tool controls are irrelevant (roles
+    /// are fixed Claude+Codex), so they are disabled.
+    private var openModeSegment: NSSegmentedControl?
 
     /// Map popup index → tool. Keep this aligned with the popup item order below.
     static let items = ["Claude Code", "Codex", "Gemini", "Local LLM", "없음"]
@@ -2688,9 +2741,34 @@ fileprivate final class AIToolPickerTrampoline: NSObject {
         aiPopup.action = #selector(toolChanged(_:))
     }
 
+    /// Binds the open-mode segmented control and applies initial enablement.
+    func attachOpenModeSegment(_ segment: NSSegmentedControl) {
+        openModeSegment = segment
+        segment.target = self
+        segment.action = #selector(openModeChanged(_:))
+        applyEnablement()
+    }
+
+    var isEditReviewSelected: Bool { openModeSegment?.selectedSegment == 1 }
+
+    func selectedLaunchMode() -> MomentermProjectLaunchMode {
+        return isEditReviewSelected ? .editReview : .single
+    }
+
+    @objc func openModeChanged(_ sender: Any) { applyEnablement() }
+
     @objc func toolChanged(_ sender: Any) { applyEnablement() }
 
     func applyEnablement() {
+        if isEditReviewSelected {
+            aiPopup.isEnabled = false
+            modelPopup.isEnabled = false
+            statusLabel.textColor = .secondaryLabelColor
+            statusLabel.stringValue = "편집: Claude · 검토: Codex (고정)"
+            return
+        }
+        aiPopup.isEnabled = true
+        statusLabel.stringValue = lastStatusText
         let isLocal = (aiPopup.indexOfSelectedItem == 3)
         modelPopup.isEnabled = isLocal && detected.isAvailable
         if isLocal {
@@ -2701,7 +2779,8 @@ fileprivate final class AIToolPickerTrampoline: NSObject {
     }
 
     func detect(preselectModel: String? = nil) {
-        statusLabel.stringValue = "로컬 LLM 감지 중…"
+        lastStatusText = "로컬 LLM 감지 중…"
+        statusLabel.stringValue = lastStatusText
         MomentermLocalLLMDetector.detect { [weak self] status in
             guard let self else { return }
             self.detected = status
@@ -2715,11 +2794,12 @@ fileprivate final class AIToolPickerTrampoline: NSObject {
                         self.modelPopup.selectItem(withTitle: preselect)
                     }
                 }
-                self.statusLabel.stringValue = "\(status.backend.displayName) 감지됨 · 모델 \(status.models.count)개"
+                self.lastStatusText = "\(status.backend.displayName) 감지됨 · 모델 \(status.models.count)개"
             } else {
                 self.modelPopup.addItem(withTitle: "감지된 LLM 없음")
-                self.statusLabel.stringValue = "로컬 LLM 미감지 — Ollama(ollama serve) 또는 LM Studio 실행 필요"
+                self.lastStatusText = "로컬 LLM 미감지 — Ollama(ollama serve) 또는 LM Studio 실행 필요"
             }
+            // applyEnablement reflects lastStatusText (or the fixed-role hint).
             self.applyEnablement()
         }
     }

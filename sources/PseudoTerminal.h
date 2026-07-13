@@ -453,5 +453,13 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
              nearSessionGuid:(NSString *)sessionGuid
                     vertical:(BOOL)vertical;
 
+#pragma mark - MomenTerm AI pairing
+
+// Starts the two-pane edit/review pairing with `editor` as the Claude pane;
+// a vertical split hosts the Codex reviewer. `bootDelay` (seconds) lets a
+// freshly-launched editor shell reach its prompt before the CLIs are written.
+- (void)momentermStartPairSessionWithEditor:(PTYSession *)editor
+                                   bootDelay:(NSTimeInterval)bootDelay;
+
 @end
 

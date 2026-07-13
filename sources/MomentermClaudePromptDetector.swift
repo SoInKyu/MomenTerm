@@ -62,13 +62,36 @@ final class MomentermClaudePromptDetector: NSObject {
     static func isWaitingForUserResponse(tail: String) -> Bool {
         guard !tail.isEmpty else { return false }
         let range = NSRange(tail.startIndex..., in: tail)
-        for regex in patterns {
-            if regex.firstMatch(in: tail, options: [], range: range) != nil {
-                return true
-            }
+        if matchesStrongGate(tail, range: range) {
+            return true
         }
         if let menu = numberedMenuLine,
            menu.numberOfMatches(in: tail, options: [], range: range) >= 2 {
+            return true
+        }
+        return false
+    }
+
+    /// Strong interactive-gate signals ONLY — the `patterns` catalogue (y/N,
+    /// `❯ N.` selector, “Enter to select”, plan-mode footer, …) — deliberately
+    /// EXCLUDING the weak “two-or-more numbered lines” heuristic.
+    ///
+    /// The bare numbered-lines signal is fine for the advisory attention strip
+    /// (a numbered summary lighting the strip is a harmless false positive) but
+    /// it is wrong for the pairing turn detector, where it is load-bearing: an
+    /// agent that ends its turn with a numbered summary (“1. … 2. … 3. …”) is
+    /// FINISHED, not sitting on a menu. Treating that as a confirmation gate
+    /// wedges the relay — the ready-composer fallback never fires and the turn
+    /// never hands off. Turn detection must therefore use this stricter test.
+    @objc(isBlockedOnInteractiveGateWithTail:)
+    static func isBlockedOnInteractiveGate(tail: String) -> Bool {
+        guard !tail.isEmpty else { return false }
+        let range = NSRange(tail.startIndex..., in: tail)
+        return matchesStrongGate(tail, range: range)
+    }
+
+    private static func matchesStrongGate(_ tail: String, range: NSRange) -> Bool {
+        for regex in patterns where regex.firstMatch(in: tail, options: [], range: range) != nil {
             return true
         }
         return false

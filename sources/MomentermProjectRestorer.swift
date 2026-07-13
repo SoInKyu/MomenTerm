@@ -290,7 +290,8 @@ import AppKit
                                             projectName: project.name,
                                             projectId: project.id,
                                             inNewTab: true,
-                                            aiCommand: aiCommand)
+                                            aiCommand: aiCommand,
+                                            startEditReview: false)
         } else {
             // No window yet — open a new one. We can't go through the sidebar delegate
             // (it requires an instance), so use the launcher directly.

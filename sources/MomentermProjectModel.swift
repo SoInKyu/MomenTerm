@@ -65,6 +65,22 @@ import Foundation
     }
 }
 
+/// How opening the project lays out its terminal. `.single` runs the project's
+/// configured AI tool in one pane; `.editReview` opens the two-pane pairing
+/// (Claude edits ⇄ Codex reviews). Distinct from `MomentermOpenMode`
+/// (`.newTab`/`.newWindow`), which is about window placement, not AI layout.
+@objc enum MomentermProjectLaunchMode: Int, Codable, CaseIterable {
+    case single = 0
+    case editReview = 1
+
+    var displayName: String {
+        switch self {
+        case .single: return "단일"
+        case .editReview: return "편집/검토"
+        }
+    }
+}
+
 // MARK: - Project Model
 
 struct MomentermProject: Codable, Identifiable {
@@ -72,6 +88,9 @@ struct MomentermProject: Codable, Identifiable {
     var name: String
     var path: String
     var aiTool: MomentermAITool
+    /// Single terminal vs. edit/review pairing. Defaults to `.single`; older
+    /// projects.json files without the key decode to `.single` too.
+    var launchMode: MomentermProjectLaunchMode = .single
     var tmuxMode: MomentermTmuxMode
     var tmuxSession: String?
     var createdAt: Date
@@ -100,7 +119,7 @@ struct MomentermProject: Codable, Identifiable {
 
     // Backward-compatible decode: older projects.json files won't have the snapshot fields.
     enum CodingKeys: String, CodingKey {
-        case id, name, path, aiTool, tmuxMode, tmuxSession, createdAt, lastOpenedAt
+        case id, name, path, aiTool, launchMode, tmuxMode, tmuxSession, createdAt, lastOpenedAt
         case localLLMBackend, localLLMModel
         case lastWorkingDirectory, lastAITool, lastCommands, lastFocusedAt, wasOpenAtTermination
     }
@@ -117,6 +136,7 @@ struct MomentermProject: Codable, Identifiable {
         // want no AI tool can change it back in the project settings UI.
         let decodedAITool = try c.decode(MomentermAITool.self, forKey: .aiTool)
         self.aiTool = (decodedAITool == .none) ? .claudeCode : decodedAITool
+        self.launchMode = try c.decodeIfPresent(MomentermProjectLaunchMode.self, forKey: .launchMode) ?? .single
         self.tmuxMode = try c.decode(MomentermTmuxMode.self, forKey: .tmuxMode)
         self.tmuxSession = try c.decodeIfPresent(String.self, forKey: .tmuxSession)
         self.createdAt = try c.decode(Date.self, forKey: .createdAt)
