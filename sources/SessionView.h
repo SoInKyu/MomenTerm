@@ -241,6 +241,11 @@ typedef NS_ENUM(NSUInteger, iTermSessionViewFindDriver) {
 // MomentermClaudePromptDetector.
 @property (nonatomic, readonly, nullable) MomentermAttentionBarView *momentermAttentionBar;
 
+// MomenTerm: while this pane belongs to an AI pair, both panes of the pair
+// must render at full brightness — this overrides inactive-split-pane and
+// background-window dimming. Set by MomentermPairBorderView on attach/detach.
+@property (nonatomic) BOOL momentermPairUndimmed;
+
 @property (nonatomic) NSSize savedSize;
 
 - (void)setBrowserViewController:(iTermBrowserViewController *)browserViewController

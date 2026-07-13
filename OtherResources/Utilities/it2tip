@@ -196,7 +196,7 @@ tips = [
         },
     {
         "title": "Split Panes",
-        "body": "You can split a tab into multiple panes with ⌘D and ⇧⌘D."
+        "body": "You can split a tab into multiple panes with ⌘D. In MomenTerm, ⇧⌘D starts or stops AI pairing instead of splitting horizontally."
         },
     {
         "title": "Adjust Split Panes",

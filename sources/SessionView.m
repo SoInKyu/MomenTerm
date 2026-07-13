@@ -1280,6 +1280,9 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     if (_colorsSettingsVisible > 0) {
         return 0;
     }
+    if (_momentermPairUndimmed) {
+        return 0;
+    }
     int x = 0;
     if (_dim) {
         x++;
@@ -1323,6 +1326,14 @@ NSString *const SessionViewWasSelectedForInspectionNotification = @"SessionViewW
     } else {
         _dim = isDimmed;
     }
+}
+
+- (void)setMomentermPairUndimmed:(BOOL)momentermPairUndimmed {
+    if (momentermPairUndimmed == _momentermPairUndimmed) {
+        return;
+    }
+    _momentermPairUndimmed = momentermPairUndimmed;
+    [self updateDim];
 }
 
 - (void)setBackgroundDimmed:(BOOL)backgroundDimmed {

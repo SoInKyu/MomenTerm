@@ -1480,14 +1480,19 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
 // MARK: - MomenTerm AI pairing (Codex ⇄ Claude)
 
-// The bottom-strip pair affordance is a toggle: start a relay if none is
-// running, otherwise stop the live one (the user's only in-loop control).
-- (void)momentermBottomStripDidTapPair {
+// Toggle: start a relay if none is running, otherwise stop the live one (the
+// user's only in-loop control). Reached from the ⌘⇧D menu item and the
+// bottom-strip pair affordance alike.
+- (IBAction)momentermTogglePairSession:(id)sender {
     if (_momentermPairSession && _momentermPairSession.isRunning) {
         [self momentermStopPairSession:nil];
     } else {
         [self momentermStartPairSession:nil];
     }
+}
+
+- (void)momentermBottomStripDidTapPair {
+    [self momentermTogglePairSession:nil];
 }
 
 - (void)momentermStartPairSession:(id)sender {
@@ -1568,6 +1573,22 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     // stop() drives the finish delegate (stoppedByUser), which paints the
     // completion borders and releases the orchestrator.
     [_momentermPairSession stop];
+}
+
+// While a relay is live its two panes are one unit — closing either one must
+// close both. Returns the other pane of the live pair, or nil when `session`
+// is not part of a running relay (finished pairs are independent panes again).
+- (PTYSession *)momentermLivePairPartnerOf:(PTYSession *)session {
+    if (!_momentermPairSession || !_momentermPairSession.isRunning) {
+        return nil;
+    }
+    if (session == _momentermPairSession.editorSession) {
+        return _momentermPairSession.reviewerSession;
+    }
+    if (session == _momentermPairSession.reviewerSession) {
+        return _momentermPairSession.editorSession;
+    }
+    return nil;
 }
 
 - (void)momentermTeardownPairBorders {
@@ -2615,6 +2636,16 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (void)closeSession:(PTYSession *)aSession soft:(BOOL)soft {
+    // MomenTerm: a live AI pair lives and dies as a unit. Stop the relay
+    // first — that releases the orchestrator, so the recursive close of the
+    // partner finds no running pair and takes the normal path.
+    PTYSession *pairPartner = [self momentermLivePairPartnerOf:aSession];
+    if (pairPartner) {
+        [_momentermPairSession stop];
+        if (!pairPartner.exited && [[self allSessions] containsObject:pairPartner]) {
+            [self closeSession:pairPartner soft:soft];
+        }
+    }
     if (!soft &&
         [aSession isTmuxClient] &&
         [[aSession tmuxController] isAttached]) {

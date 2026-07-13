@@ -62,15 +62,20 @@ final class MomentermPairBorderView: NSView {
     // Pass all mouse events through to the terminal underneath.
     override func hitTest(_ point: NSPoint) -> NSView? { return nil }
 
-    /// Attach to a session's view, filling it and tracking resizes.
+    /// Attach to a session's view, filling it and tracking resizes. While the
+    /// relay is live (from attach until completion or detach), the pane is
+    /// exempt from inactive-pane dimming so both halves of the pair stay at
+    /// full brightness.
     @objc func attach(to host: NSView) {
         frame = host.bounds
         autoresizingMask = [.width, .height]
         host.addSubview(self)
+        (host as? SessionView)?.momentermPairUndimmed = true
         layoutPill()
     }
 
     @objc func detach() {
+        (superview as? SessionView)?.momentermPairUndimmed = false
         removeFromSuperview()
     }
 
@@ -127,9 +132,12 @@ final class MomentermPairBorderView: NSView {
     }
 
     /// Terminal state: solid outcome color, no pulse, result in the pill.
+    /// The pair is over, so the pane goes back to normal dimming rules — the
+    /// full-brightness override only applies while the relay is live.
     @objc func showCompletion(text: String, color: NSColor) {
         completed = true
         isActive = false
+        (superview as? SessionView)?.momentermPairUndimmed = false
         layer?.removeAnimation(forKey: "pulse")
         layer?.borderColor = color.cgColor
         pill.stringValue = "\(roleName) · \(text)"

@@ -132,11 +132,76 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
             tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
     }
 
-    func testNotIdleNeverEndsTurn() {
-        let tail = "[[END_TURN]]"
+    // Regression (reviewer feedback): the user typing — or having queued —
+    // their next message echoes keystrokes and keeps resetting the PTY idle
+    // clock. An explicit fresh sentinel must hand the turn over anyway; only
+    // screen content (no spinner) matters on this path.
+    func testFreshSentinelEndsTurnEvenWhenNotIdle() {
+        let tail = "I made the change.\n[[END_TURN]]"
+        XCTAssertTrue(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: false, elapsed: 3,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    // But a sentinel on a pane that still LOOKS working (spinner / interrupt
+    // hint in the tail) is a leftover above an active turn — not a turn end.
+    func testSentinelOnStillWorkingPaneDoesNotEndTurn() {
+        let tail = "[[END_TURN]]\n⣷ Thinking… (esc to interrupt)"
         XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
             observedWorking: true, idle: false, elapsed: 999,
             tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    // Regression (reviewer feedback): .awaitingConfirmation is defined as “not
+    // a finished turn”. A prior turn's sentinel lingering above a y/N /
+    // permission / plan-approval gate must not be read as a fresh turn end —
+    // the sentinel path only fires on a ready composer.
+    func testSentinelAboveInteractiveGateDoesNotEndTurn() {
+        let tail = "[[END_TURN]]\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select"
+        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: true, elapsed: 999,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    func testApprovalAboveInteractiveGateRejected() {
+        let tail = "[[APPROVED]]\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select"
+        XCTAssertFalse(MomentermPairTurnDetector.isApproval(
+            observedWorking: true, elapsed: 999, tail: tail, grace: sentinelGrace))
+    }
+
+    // The no-sentinel fallback keeps the strict PTY-idle requirement — a ready
+    // composer alone, on a pane that is still emitting output, proves nothing.
+    func testReadyFallbackStillRequiresIdle() {
+        let tail = "Done.\n\n>\n? for shortcuts"
+        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: false, elapsed: 999,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    // MARK: - Approval decision
+
+    func testApprovalRequiresObservedWorking() {
+        let tail = "Looks great.\n[[APPROVED]]"
+        XCTAssertFalse(MomentermPairTurnDetector.isApproval(
+            observedWorking: false, elapsed: 999, tail: tail, grace: sentinelGrace))
+    }
+
+    func testApprovalIgnoresIdleAndFiresOnFreshToken() {
+        let tail = "Looks great.\n[[APPROVED]]"
+        XCTAssertTrue(MomentermPairTurnDetector.isApproval(
+            observedWorking: true, elapsed: 3, tail: tail, grace: sentinelGrace))
+    }
+
+    func testApprovalRejectedWhileStillWorking() {
+        let tail = "[[APPROVED]]\n⣷ Generating… (esc to interrupt)"
+        XCTAssertFalse(MomentermPairTurnDetector.isApproval(
+            observedWorking: true, elapsed: 999, tail: tail, grace: sentinelGrace))
+    }
+
+    func testApprovalWithinGraceRejected() {
+        let tail = "[[APPROVED]]"
+        XCTAssertFalse(MomentermPairTurnDetector.isApproval(
+            observedWorking: true, elapsed: 1, tail: tail, grace: sentinelGrace))
     }
 
     // MARK: - Heuristic classification

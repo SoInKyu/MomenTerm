@@ -1110,7 +1110,7 @@ private struct DropTarget {
             ("탭/창 관리", [
                 ("⌘T",    "새 탭"),
                 ("⌘D",    "창 수직 분할"),
-                ("⇧⌘D",  "창 수평 분할"),
+                ("⇧⌘D",  "AI 페어링 시작/정지"),
                 ("⌘←/→", "탭 이동 (또는 ⌘1-9)"),
                 ("⌘[/]",  "분할 화면 간 이동"),
             ]),
@@ -1398,7 +1398,7 @@ private struct DropTarget {
         appendLine("탭 · 창 관리", aSubhead)
         appendKbd("⌘T", "새 탭")
         appendKbd("⌘D", "창 수직 분할")
-        appendKbd("⇧⌘D", "창 수평 분할")
+        appendKbd("⇧⌘D", "AI 페어링 시작/정지")
         appendKbd("⌘W", "탭 닫기")
 
         appendLine("이동", aSubhead)

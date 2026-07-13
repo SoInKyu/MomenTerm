@@ -22,9 +22,13 @@
 //  Turn boundaries never trust a sentinel that merely *exists* in the screen
 //  tail — a prior turn's `[[END_TURN]]`/`[[APPROVED]]` can linger there. A turn
 //  only ends after the orchestrator has observed the speaker actively working
-//  (spinner / “esc to interrupt”) since that turn began, then return to idle.
-//  That “observed working this turn” latch is what distinguishes a genuine new
-//  turn end from a stale sentinel sitting on a briefly-quiet screen.
+//  (spinner / “esc to interrupt”) since that turn began, then STOP looking
+//  working. That “observed working this turn” latch is what distinguishes a
+//  genuine new turn end from a stale sentinel on a briefly-quiet screen.
+//  Deliberately, sentinel detection does NOT require PTY quiet time: the user
+//  may already be typing (or have queued) their next message into the editor,
+//  and each keystroke echo resets the idle clock — that must not stall the
+//  handoff. Only the no-sentinel ready-composer fallback requires true idle.
 //
 //  Two robustness pillars (see MomentermPairTurnDetector):
 //    1. git diff as the review payload — never scrape the editor's TUI for the
@@ -250,10 +254,11 @@ final class MomentermPairSession: NSObject {
         // Convergence is ONLY ever the explicit token — never inferred — and
         // never from a stale `[[APPROVED]]` left over from a prior reviewer
         // turn: it only counts once we've seen the reviewer work this turn.
-        if observedWorkingThisTurn,
-           isIdle(reviewer),
-           nowRef() - injectionTime >= sentinelResponseGrace,
-           MomentermPairTurnDetector.tailContainsApproved(reviewerTail) {
+        if MomentermPairTurnDetector.isApproval(
+            observedWorking: observedWorkingThisTurn,
+            elapsed: nowRef() - injectionTime,
+            tail: reviewerTail,
+            grace: sentinelResponseGrace) {
             finish(.approved); return
         }
 

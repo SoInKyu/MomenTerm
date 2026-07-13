@@ -60,6 +60,7 @@ class MainMenuMangler: NSObject {
         "Duplicate Window": "document.on.document.fill",
         "Duplicate Session": "rectangle.on.rectangle",
         "Press Option for New Window": "option",
+        "Momenterm Toggle AI Pair": "person.2",
         "Split Horizontally with Current Profile": "square.split.1x2.fill",
         "Split Vertically with Current Profile": "square.split.2x1.fill",
         "Split Horizontally…": "square.split.1x2",

@@ -78,16 +78,22 @@ final class MomentermPairTurnDetector: NSObject {
     }
 
     /// Pure turn-boundary decision, factored out of the orchestrator so it can
-    /// be unit-tested without a live pane. A turn ends only when ALL hold:
+    /// be unit-tested without a live pane.
     ///
     ///   • `observedWorking` — the speaker was seen working since this turn
     ///     began. This is the load-bearing guard against stale sentinels: a
     ///     prior turn's `[[END_TURN]]` can still sit in the screen tail, so its
     ///     mere presence must NOT end a turn the speaker never actually started.
-    ///   • `idle` — the pane has since gone quiet.
-    ///   • either a standalone `[[END_TURN]]` line after `sentinelGrace`
-    ///     (primary), or an idle ready-composer after `readyGrace` (fallback
-    ///     for a turn that omitted the sentinel).
+    ///   • Sentinel path (primary): a standalone `[[END_TURN]]` line after
+    ///     `sentinelGrace`, judged by screen CONTENT — the pane must have
+    ///     returned to a ready composer (`.ready`; a spinner OR an interactive
+    ///     y/N·permission gate both mean the turn is still in flight, so a
+    ///     lingering sentinel above them must not count). PTY quiet time is
+    ///     deliberately NOT required. The user may already be typing (or have
+    ///     queued) their next message, and every keystroke echo resets the PTY
+    ///     idle clock — an explicit sentinel must still hand the turn over.
+    ///   • Ready fallback: a turn that omitted the sentinel ends only on a
+    ///     truly `idle` pane showing a ready composer after `readyGrace`.
     ///
     /// `elapsed` is time since the turn began (the last injection); the graces
     /// keep our own just-echoed instruction from being read as the reply.
@@ -98,14 +104,31 @@ final class MomentermPairTurnDetector: NSObject {
                           tail: String,
                           sentinelGrace: TimeInterval,
                           readyGrace: TimeInterval) -> Bool {
-        guard observedWorking, idle else { return false }
-        if elapsed >= sentinelGrace, tailContainsEndTurn(tail) {
+        guard observedWorking else { return false }
+        let state = turnState(tail: tail)
+        if elapsed >= sentinelGrace, state == .ready, tailContainsEndTurn(tail) {
             return true
         }
-        if elapsed >= readyGrace, turnState(tail: tail) == .ready {
+        if idle, elapsed >= readyGrace, state == .ready {
             return true
         }
         return false
+    }
+
+    /// Pure convergence decision, mirroring the sentinel path of `isTurnEnd`:
+    /// approval is only ever the explicit standalone `[[APPROVED]]` line, from
+    /// a reviewer that was seen working this turn and has returned to a ready
+    /// composer (a working spinner or an interactive gate both mean the turn —
+    /// and any lingering token above it — is not a fresh approval). PTY quiet
+    /// time is NOT required, for the same keystroke-echo reason.
+    @objc(isApprovalObservedWorking:elapsed:tail:grace:)
+    static func isApproval(observedWorking: Bool,
+                           elapsed: TimeInterval,
+                           tail: String,
+                           grace: TimeInterval) -> Bool {
+        guard observedWorking, elapsed >= grace else { return false }
+        guard turnState(tail: tail) == .ready else { return false }
+        return tailContainsApproved(tail)
     }
 
     // Tokens that indicate the agent is actively producing output. In practice

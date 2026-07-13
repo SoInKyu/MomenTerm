@@ -167,7 +167,7 @@
                         kTipBodyKey: @"Copy a file to the pasteboard in Finder and then use “Edit > Paste Special > Paste File Base64-Encoded” for easy uploads of binary files. Use ”base64 -D” (or -d on Linux) on the remote host to decode it." },
 
             @"0042": @{ kTipTitleKey: @"Split Panes",
-                        kTipBodyKey: @"You can split a tab into multiple panes with ⌘D and ⇧⌘D." },
+                        kTipBodyKey: @"You can split a tab into multiple panes with ⌘D. In MomenTerm, ⇧⌘D starts or stops AI pairing instead of splitting horizontally." },
 
             @"0043": @{ kTipTitleKey: @"Adjust Split Panes",
                         kTipBodyKey: @"Resize split panes with the keyboard using ^⌘-Arrow Key." },
