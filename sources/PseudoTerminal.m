@@ -1112,30 +1112,46 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     if ((self.window.styleMask & NSWindowStyleMaskTitled) == 0) {
         return;
     }
-    // Build the toggle button — borderless so contentTintColor renders cleanly
-    NSImage *sidebarImg = [NSImage imageWithSystemSymbolName:@"sidebar.left"
-                                       accessibilityDescription:@"Workspace 패널"];
-    NSButton *btn = [NSButton buttonWithImage:sidebarImg target:self
-                                       action:@selector(toggleMomentermSidebar:)];
-    btn.bezelStyle = NSBezelStyleSmallSquare;
-    [btn setBordered:NO];
-    btn.frame = NSMakeRect(0, 0, 28, 22);
-    btn.autoresizingMask = NSViewNotSizable;
-    btn.toolTip = @"Workspace 패널 표시/숨기기";
+    // Build the accessory lazily; it is reused across every re-registration so
+    // that switching window style / entering-exiting full screen (which wipes
+    // the Nanny's managed set) can simply re-add the same instance.
+    if (!_momentermToggleAccessory) {
+        // Build the toggle button — borderless so contentTintColor renders cleanly
+        NSImage *sidebarImg = [NSImage imageWithSystemSymbolName:@"sidebar.left"
+                                           accessibilityDescription:@"Workspace 패널"];
+        NSButton *btn = [NSButton buttonWithImage:sidebarImg target:self
+                                           action:@selector(toggleMomentermSidebar:)];
+        btn.bezelStyle = NSBezelStyleSmallSquare;
+        [btn setBordered:NO];
+        btn.autoresizingMask = NSViewNotSizable;
+        btn.toolTip = @"Workspace 패널 표시/숨기기";
 
-    // Wrap in a container view so layoutAttribute = left works cleanly
-    NSView *container = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, btn.frame.size.width + 4, 24)] autorelease];
-    btn.frame = NSMakeRect(2, 1, btn.frame.size.width, 22);
-    [container addSubview:btn];
+        // Wrap in a container view so layoutAttribute = left works cleanly
+        NSView *container = [[[NSView alloc] initWithFrame:NSMakeRect(0, 0, 32, 24)] autorelease];
+        btn.frame = NSMakeRect(2, 1, 28, 22);
+        [container addSubview:btn];
 
-    _momentermToggleButton = btn;
-    _momentermToggleAccessory = [[NSTitlebarAccessoryViewController alloc] init];
-    _momentermToggleAccessory.view = container;
-    _momentermToggleAccessory.layoutAttribute = NSLayoutAttributeLeft;
-    [self.window addTitlebarAccessoryViewController:_momentermToggleAccessory];
+        _momentermToggleButton = btn;
+        _momentermToggleAccessory = [[NSTitlebarAccessoryViewController alloc] init];
+        _momentermToggleAccessory.view = container;
+        _momentermToggleAccessory.layoutAttribute = NSLayoutAttributeLeft;
 
-    // Reflect the initial sidebar state in the button color
-    [self it_updateMomentermToggleButtonAppearance];
+        // Reflect the initial sidebar state in the button color
+        [self it_updateMomentermToggleButtonAppearance];
+    }
+
+    // Register THROUGH the accessory Nanny rather than adding to the window
+    // directly. The Nanny owns titlebar accessories and its reconciliation pass
+    // removes any accessory that is not in its managed `viewControllers` set —
+    // so a direct addTitlebarAccessoryViewController: gets silently culled the
+    // next time the Nanny runs (which is why the toggle was invisible). Going
+    // through the Nanny keeps it managed and re-added after style changes.
+    if (![_titlebarAccessoryNanny.viewControllers containsObject:_momentermToggleAccessory]) {
+        // Force-load the view before adding — mirrors the shortcut accessory
+        // path, which does this to stop maximized windows mis-sizing the root view.
+        [_momentermToggleAccessory view];
+        [_titlebarAccessoryNanny add:_momentermToggleAccessory];
+    }
 }
 
 - (void)it_updateMomentermToggleButtonAppearance {
@@ -6665,6 +6681,11 @@ hidingToolbeltShouldResizeWindow:(BOOL)hidingToolbeltShouldResizeWindow
 
 - (void)addShortcutAccessorViewControllerToTitleBarIfNeeded {
     DLog(@"addShortcutAccessorViewControllerToTitleBarIfNeeded");
+    // MomenTerm: re-register the sidebar toggle here too. This method is the
+    // canonical "(re)attach titlebar accessories" hook — it runs at init and
+    // after every window-style change (which wipe the Nanny's managed set), so
+    // piggybacking keeps the toggle alive across those transitions.
+    [self it_setupMomentermToggleButton];
     if (!_shortcutAccessoryViewController) {
         DLog(@"Don't already have a shortcut accessory view controller");
         return;
