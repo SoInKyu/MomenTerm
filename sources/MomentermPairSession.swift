@@ -10,14 +10,21 @@
 //                          approves or returns actionable feedback
 //
 //  Flow: the user drives the editor (claude) pane directly — they type the
-//  task into it, there is no seed sheet. Because the user's own first message
-//  can't carry a turn sentinel, the orchestrator first *primes* the editor
-//  with a one-time standing instruction to end every turn with `[[END_TURN]]`,
-//  waits for its ack, then watches for the editor's first task turn to end,
-//  computes the editor cwd's `git diff` and hands the *diff file path* to the
-//  reviewer → reviewer critiques → orchestrator relays the critique back to
-//  the editor → … until the reviewer emits `[[APPROVED]]` or the round cap is
-//  hit.
+//  task into it, there is no seed sheet. The editor is launched with the turn
+//  sentinel instruction folded into its `--append-system-prompt`, so every
+//  turn (including the first, user-typed one) ends with a `[[END_TURN]]` line
+//  without anything being injected into the input stream ahead of the user.
+//  The orchestrator watches for the editor's first task turn to end, computes
+//  the editor cwd's `git diff` and hands the *diff file path* to the reviewer
+//  → reviewer critiques → orchestrator relays the critique back to the editor
+//  → … until the reviewer emits `[[APPROVED]]` or the round cap is hit.
+//
+//  Turn boundaries never trust a sentinel that merely *exists* in the screen
+//  tail — a prior turn's `[[END_TURN]]`/`[[APPROVED]]` can linger there. A turn
+//  only ends after the orchestrator has observed the speaker actively working
+//  (spinner / “esc to interrupt”) since that turn began, then return to idle.
+//  That “observed working this turn” latch is what distinguishes a genuine new
+//  turn end from a stale sentinel sitting on a briefly-quiet screen.
 //
 //  Two robustness pillars (see MomentermPairTurnDetector):
 //    1. git diff as the review payload — never scrape the editor's TUI for the
@@ -81,20 +88,23 @@ final class MomentermPairSession: NSObject {
 
     // MARK: State
     private enum Phase {
-        case primingEditor            // inject the standing sentinel instruction, await ack
         case awaitingEditorFirstTurn
         case editorTurn
         case reviewerTurn
         case finished
     }
-    private var phase: Phase = .primingEditor
-    /// Set once the standing `[[END_TURN]]` instruction has been injected into
-    /// the editor so the priming turn is only awaited, not re-sent.
-    private var primingSent = false
-    /// Set once the editor pane leaves its idle composer and starts working —
-    /// i.e. the user has submitted the first task. Until then there is nothing
-    /// to relay.
-    private var editorEngaged = false
+    private var phase: Phase = .awaitingEditorFirstTurn
+    /// Set once the editor has settled into a ready composer at least once —
+    /// i.e. the CLI finished booting. Only then do we start watching for the
+    /// user's task work, so boot-time spinner output isn't mistaken for it.
+    private var sawReadyComposer = false
+    /// Set when the current speaker has been observed actively working
+    /// (spinner / “esc to interrupt”) SINCE the current turn began. Reset on
+    /// every turn boundary (each injection, and at session start). A turn is
+    /// only allowed to end once this is true — otherwise a prior turn's
+    /// sentinel lingering in the screen tail could trigger a premature
+    /// transition on a brief quiet moment before the speaker has even started.
+    private var observedWorkingThisTurn = false
     /// The editor's screen at the end of its first turn, cleaned and handed to
     /// the reviewer as context (carries the user's typed task + the editor's
     /// plan). Empty if it could not be captured.
@@ -115,9 +125,9 @@ final class MomentermPairSession: NSObject {
         editorSession = editor
         reviewerSession = reviewer
         isRunning = true
-        phase = .primingEditor
-        primingSent = false
-        editorEngaged = false
+        phase = .awaitingEditorFirstTurn
+        sawReadyComposer = false
+        observedWorkingThisTurn = false
         startTime = nowRef()
         roundCount = 0
 
@@ -177,8 +187,6 @@ final class MomentermPairSession: NSObject {
         }
 
         switch phase {
-        case .primingEditor:
-            handlePrimingEditor(editor: editor)
         case .awaitingEditorFirstTurn:
             handleAwaitingEditorFirstTurn(editor: editor)
         case .editorTurn:
@@ -190,51 +198,27 @@ final class MomentermPairSession: NSObject {
         }
     }
 
-    /// Before the user types anything, prime the editor once with a standing
-    /// instruction to end every turn with `[[END_TURN]]`. The user can't carry
-    /// the sentinel in their own first message, so without this the first real
-    /// task turn would fall back to the fragile idle-composer heuristic. We
-    /// wait for the editor's composer to be ready (booted), inject the standing
-    /// instruction, then await its short ack turn before opening the relay.
-    private func handlePrimingEditor(editor: PTYSession) {
-        guard nowRef() - startTime >= bootGrace else { return }
-
-        if !primingSent {
-            // Only inject once the CLI has drawn its idle composer — injecting
-            // into a still-booting pane would drop the message.
-            guard MomentermPairTurnDetector.turnState(tail: tail(editor, editorTailLines)) == .ready else { return }
-            inject(editorPrimingPrompt(), into: editor)
-            primingSent = true
-            DLog("MomentermPairSession: primed editor with standing [[END_TURN]] instruction")
-            return
-        }
-
-        // Await the editor's ack turn. The sentinel makes this reliable; the
-        // ready fallback still covers a model that skips it.
-        guard turnEnded(editor, tailLines: editorTailLines) else { return }
-        DLog("MomentermPairSession: editor acked priming → awaiting user's first task")
-        phase = .awaitingEditorFirstTurn
-    }
-
     /// The user drives the editor pane directly — there is no seed sheet. We
     /// wait for them to submit a task (the pane leaves its idle composer and
     /// starts working), then treat the return to idle as the end of the
     /// editor's first turn and open the review relay.
     private func handleAwaitingEditorFirstTurn(editor: PTYSession) {
-        guard nowRef() - startTime >= bootGrace else { return }
-
-        if !editorEngaged {
-            // Nothing to relay until the user has actually given the editor a
-            // task and it has begun working. A `.working` state (spinner /
-            // “esc to interrupt”) is the signal — mere keystroke echo would
-            // fire the idle heuristic mid-typing.
-            if MomentermPairTurnDetector.turnState(tail: tail(editor, editorTailLines)) == .working {
-                editorEngaged = true
-                DLog("MomentermPairSession: editor engaged (observed .working)")
+        // Separate boot noise from real task work: only begin watching for the
+        // user's task once the composer has settled into a ready state at least
+        // once (boot complete). `bootGrace` is a floor for the case where a
+        // clean ready frame is never observed (e.g. input queued during boot).
+        if !sawReadyComposer {
+            if MomentermPairTurnDetector.turnState(tail: tail(editor, editorTailLines)) == .ready {
+                sawReadyComposer = true
+                DLog("MomentermPairSession: editor composer ready (boot complete)")
+            } else if nowRef() - startTime < bootGrace {
+                return
             }
-            return
         }
 
+        // `turnEnded` requires having observed the editor working since start;
+        // until the user submits a task there is nothing to relay.
+        noteWorking(editor)
         guard turnEnded(editor, tailLines: editorTailLines) else { return }
         DLog("MomentermPairSession: first editor turn ended → relaying diff to reviewer")
         capturedTaskContext = captureEditorContext(editor)
@@ -242,6 +226,7 @@ final class MomentermPairSession: NSObject {
     }
 
     private func handleEditorTurn(editor: PTYSession) {
+        noteWorking(editor)
         guard turnEnded(editor, tailLines: editorTailLines) else { return }
         relayDiffToReviewer()
     }
@@ -259,10 +244,14 @@ final class MomentermPairSession: NSObject {
     }
 
     private func handleReviewerTurn(reviewer: PTYSession) {
+        noteWorking(reviewer)
         let reviewerTail = tail(reviewer, reviewerTailLines)
 
-        // Convergence is ONLY ever the explicit token — never inferred.
-        if isIdle(reviewer),
+        // Convergence is ONLY ever the explicit token — never inferred — and
+        // never from a stale `[[APPROVED]]` left over from a prior reviewer
+        // turn: it only counts once we've seen the reviewer work this turn.
+        if observedWorkingThisTurn,
+           isIdle(reviewer),
            nowRef() - injectionTime >= sentinelResponseGrace,
            MomentermPairTurnDetector.tailContainsApproved(reviewerTail) {
             finish(.approved); return
@@ -294,22 +283,28 @@ final class MomentermPairSession: NSObject {
         return nowRef() - last >= idleThreshold
     }
 
-    /// True when the current speaker has finished a turn: an explicit
-    /// standalone [[END_TURN]] once idle (primary), or an idle ready-composer
-    /// after a response grace (fallback for a forgotten sentinel).
+    /// Latch that the current speaker has been seen working since this turn
+    /// began. Called every tick for the active pane.
+    private func noteWorking(_ session: PTYSession) {
+        guard !observedWorkingThisTurn else { return }
+        if MomentermPairTurnDetector.turnState(tail: tail(session, editorTailLines)) == .working {
+            observedWorkingThisTurn = true
+            DLog("MomentermPairSession: observed speaker working this turn")
+        }
+    }
+
+    /// True when the current speaker has finished a turn. The decision itself
+    /// lives in a pure, unit-tested function; the key guard is that we must
+    /// have observed the speaker working THIS turn, so a prior turn's sentinel
+    /// still on screen cannot end a turn that never really started.
     private func turnEnded(_ session: PTYSession, tailLines: Int) -> Bool {
-        guard isIdle(session) else { return false }
-        let t = tail(session, tailLines)
-        let elapsed = nowRef() - injectionTime
-        if elapsed >= sentinelResponseGrace, MomentermPairTurnDetector.tailContainsEndTurn(t) {
-            return true
-        }
-        if elapsed >= readyResponseGrace,
-           MomentermPairTurnDetector.turnState(tail: t) == .ready {
-            DLog("MomentermPairSession: falling back to ready-composer heuristic for turn end")
-            return true
-        }
-        return false
+        return MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: observedWorkingThisTurn,
+            idle: isIdle(session),
+            elapsed: nowRef() - injectionTime,
+            tail: tail(session, tailLines),
+            sentinelGrace: sentinelResponseGrace,
+            readyGrace: readyResponseGrace)
     }
 
     private func tail(_ session: PTYSession, _ lines: Int) -> String {
@@ -374,6 +369,10 @@ final class MomentermPairSession: NSObject {
 
     private func inject(_ text: String, into session: PTYSession) {
         injectionTime = nowRef()
+        // A fresh injection starts a new turn for the receiving pane: it must
+        // be seen working again before that turn can be considered ended, so a
+        // sentinel lingering from the previous turn can't fire immediately.
+        observedWorkingThisTurn = false
         session.writeTask(Self.pasteStart + text + Self.pasteEnd)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak session] in
             session?.writeTask("\r")
@@ -395,18 +394,6 @@ final class MomentermPairSession: NSObject {
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned
-    }
-
-    /// One-time standing instruction injected before the user's first task, so
-    /// every editor turn — including that first one, which the user types and
-    /// therefore can't carry a sentinel — ends with a detectable `[[END_TURN]]`
-    /// line. The token is mentioned mid-sentence here on purpose; the detector
-    /// only matches it on a standalone line, so this echoed instruction never
-    /// false-triggers a turn end.
-    private func editorPrimingPrompt() -> String {
-        return """
-        지금부터 두 AI ‘페어 리뷰’ 모드로 진행합니다. 당신은 ‘편집자’입니다. 앞으로 당신의 모든 답변은 반드시 마지막 줄에 [[END_TURN]] 을 단독 줄로 출력해 턴의 끝을 표시하세요. 이 안내에는 ‘준비됨’ 한 마디만 답하고 마지막 줄에 [[END_TURN]] 을 출력한 뒤, 다음에 사용자가 입력할 실제 과제를 기다리세요.
-        """
     }
 
     private func reviewerPrompt(diffPath: String, diffIsEmpty: Bool) -> String {

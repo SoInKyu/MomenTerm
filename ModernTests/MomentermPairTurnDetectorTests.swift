@@ -83,6 +83,64 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
     // orchestrator's ready-composer fallback can fire. Two+ numbered lines were
     // previously mistaken for a selection menu (.awaitingConfirmation), which
     // wedged the first handoff forever.
+    // MARK: - Turn-boundary decision (stale-sentinel safety)
+
+    private let sentinelGrace: TimeInterval = 2
+    private let readyGrace: TimeInterval = 5
+
+    // The load-bearing regression: a prior turn's [[END_TURN]] is still sitting
+    // in the screen tail, but the speaker has NOT been observed working since
+    // this turn began. A brief quiet moment must NOT be read as a turn end —
+    // otherwise a leftover sentinel (e.g. from the previous editor/reviewer
+    // turn) would trigger a premature transition before the peer even starts.
+    func testLeftoverSentinelDoesNotEndTurnBeforeWorking() {
+        let tail = "previous turn output\n[[END_TURN]]\n(new prompt echoed here)"
+        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: false, idle: true, elapsed: 999,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    // Same guard for the ready-composer fallback: an idle ready composer with a
+    // leftover screen cannot end a turn that never started working.
+    func testReadyFallbackRequiresObservedWorking() {
+        let tail = "All set.\n\n>\n? for shortcuts"
+        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: false, idle: true, elapsed: 999,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    func testTurnEndsOnFreshSentinelAfterWorking() {
+        let tail = "I made the change.\n[[END_TURN]]"
+        XCTAssertTrue(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: true, elapsed: 3,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    // Sentinel present but still inside the response grace — this is our own
+    // just-echoed instruction, not the reply, so the turn has not ended yet.
+    func testSentinelWithinGraceDoesNotEndTurn() {
+        let tail = "…마지막에 [[END_TURN]] 을 출력하세요\n[[END_TURN]]"
+        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: true, elapsed: 1,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    func testReadyFallbackEndsTurnAfterWorkingWhenSentinelOmitted() {
+        let tail = "Done.\n\n>\n? for shortcuts"
+        XCTAssertTrue(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: true, elapsed: 6,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    func testNotIdleNeverEndsTurn() {
+        let tail = "[[END_TURN]]"
+        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: true, idle: false, elapsed: 999,
+            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+    }
+
+    // MARK: - Heuristic classification
+
     func testReadyWhenIdleComposerHasNumberedSummary() {
         let tail = """
         ● I made the following changes:

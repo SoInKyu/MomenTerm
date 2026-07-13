@@ -1537,7 +1537,17 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
 - (void)momentermBeginPairWithEditor:(PTYSession *)editor reviewer:(PTYSession *)reviewer {
     // Launch the two CLIs: editor = claude (edits), reviewer = codex (reviews).
-    [editor writeTask:@"claude --dangerously-skip-permissions\n"];
+    //
+    // The editor carries the turn-sentinel instruction as an appended system
+    // prompt, NOT as a first injected “priming” message. The user types the
+    // first task straight into this pane, so we cannot prepend a sentinel to
+    // their message; a separate priming turn raced with that user input (a task
+    // submitted during boot, or right after the priming ack, could be lost or
+    // mistaken for the ack). Folding the instruction into --append-system-prompt
+    // makes every turn — including that first user-typed one — end with a
+    // detectable [[END_TURN]] line, with nothing injected into the input stream
+    // ahead of the user.
+    [editor writeTask:@"claude --dangerously-skip-permissions --append-system-prompt '당신은 두 AI 페어 리뷰의 편집자입니다. 모든 답변의 맨 마지막 줄에 [[END_TURN]] 을 단독으로 출력해 턴의 끝을 표시하세요.'\n"];
     [reviewer writeTask:@"codex\n"];
 
     // Neon grouping borders + turn-direction pills.

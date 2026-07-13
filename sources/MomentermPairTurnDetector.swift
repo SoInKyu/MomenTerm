@@ -77,6 +77,37 @@ final class MomentermPairTurnDetector: NSObject {
         return containsStandalone(approvedRegex, in: tail)
     }
 
+    /// Pure turn-boundary decision, factored out of the orchestrator so it can
+    /// be unit-tested without a live pane. A turn ends only when ALL hold:
+    ///
+    ///   • `observedWorking` — the speaker was seen working since this turn
+    ///     began. This is the load-bearing guard against stale sentinels: a
+    ///     prior turn's `[[END_TURN]]` can still sit in the screen tail, so its
+    ///     mere presence must NOT end a turn the speaker never actually started.
+    ///   • `idle` — the pane has since gone quiet.
+    ///   • either a standalone `[[END_TURN]]` line after `sentinelGrace`
+    ///     (primary), or an idle ready-composer after `readyGrace` (fallback
+    ///     for a turn that omitted the sentinel).
+    ///
+    /// `elapsed` is time since the turn began (the last injection); the graces
+    /// keep our own just-echoed instruction from being read as the reply.
+    @objc(isTurnEndObservedWorking:idle:elapsed:tail:sentinelGrace:readyGrace:)
+    static func isTurnEnd(observedWorking: Bool,
+                          idle: Bool,
+                          elapsed: TimeInterval,
+                          tail: String,
+                          sentinelGrace: TimeInterval,
+                          readyGrace: TimeInterval) -> Bool {
+        guard observedWorking, idle else { return false }
+        if elapsed >= sentinelGrace, tailContainsEndTurn(tail) {
+            return true
+        }
+        if elapsed >= readyGrace, turnState(tail: tail) == .ready {
+            return true
+        }
+        return false
+    }
+
     // Tokens that indicate the agent is actively producing output. In practice
     // the orchestrator only consults the heuristic after the pane has been
     // quiet for a while (an animating spinner keeps resetting the idle timer),
