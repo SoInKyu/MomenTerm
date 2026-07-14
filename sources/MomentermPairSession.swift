@@ -92,14 +92,6 @@ final class MomentermPairSession: NSObject {
         case finished
     }
     private var phase: Phase = .awaitingEditorFirstTurn
-    private var phaseDebugValue: Int {
-        switch phase {
-        case .awaitingEditorFirstTurn: return 0
-        case .editorTurn: return 1
-        case .reviewerTurn: return 2
-        case .finished: return 3
-        }
-    }
     /// Set once the editor has settled into a ready composer at least once —
     /// i.e. the CLI finished booting. Only then do we start watching for the
     /// user's task work, so boot-time spinner output isn't mistaken for it.
@@ -117,7 +109,6 @@ final class MomentermPairSession: NSObject {
     private var capturedTaskContext: String = ""
     private var startTime: TimeInterval = 0
     private var injectionTime: TimeInterval = 0
-    private var tickCount = 0
     private var startCommitSHA: String?
     private var editorCwd: String = ""
     private var scratchDir: URL?
@@ -238,16 +229,6 @@ final class MomentermPairSession: NSObject {
             finish(.sessionDied); return
         }
 
-        tickCount += 1
-        if tickCount % 5 == 0 {
-            let speaker = (phase == .reviewerTurn) ? reviewer : editor
-            let t = tail(speaker)
-            NSLog("[MomenTerm] pair tick#%d phase=%d state=%d observedWorking=%d sentinel=%d idle=%d tailLen=%d",
-                  tickCount, phaseDebugValue, MomentermPairTurnDetector.turnState(tail: t).rawValue,
-                  observedWorkingThisTurn ? 1 : 0,
-                  MomentermPairTurnDetector.tailContainsEndTurn(t) ? 1 : 0,
-                  isIdle(speaker) ? 1 : 0, t.count)
-        }
 
         switch phase {
         case .awaitingEditorFirstTurn:

@@ -71,6 +71,22 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
         XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .working)
     }
 
+    // Short turns never grow the parenthesized counters — the live frame is
+    // just “✳ Jitterbugging…” (captured at 0.4s intervals from a real pane).
+    // Requiring the “(” made observedWorking miss every fast turn.
+    func testWorkingOnBareSparkleProgressLine() {
+        for glyph in ["·", "✢", "✳", "✶", "✻", "✽"] {
+            let tail = "❯ 1 더하기 1은?\n\(glyph) Jitterbugging…"
+            XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .working,
+                           "glyph \(glyph) should read as working")
+        }
+    }
+
+    func testReadyOnFinishedWorkedForLine() {
+        let tail = "  [[END_TURN]]\n✻ Worked for 9s\n❯ "
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .ready)
+    }
+
     // The FINISHED form of the same line has no parenthesized live counters
     // and must read as a ready composer, or a completed turn would never end.
     func testReadyOnClaudeV2FinishedSparkleLine() {
