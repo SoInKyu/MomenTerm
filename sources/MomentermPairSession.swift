@@ -377,9 +377,14 @@ final class MomentermPairSession: NSObject {
         return r.out
     }
 
+    /// File name of the most recently relayed diff — the anchor used to find
+    /// where the echoed reviewer prompt ends in the reviewer's screen.
+    private var lastDiffFileName: String?
+
     private func writeDiffFile(_ diff: String) -> String? {
         guard let dir = scratchDir else { return nil }
         let url = dir.appendingPathComponent("diff-round-\(roundCount).patch")
+        lastDiffFileName = url.lastPathComponent
         let body = diff.isEmpty ? "(변경 사항이 없습니다)\n" : diff
         do {
             try body.write(to: url, atomically: true, encoding: .utf8)
@@ -438,6 +443,11 @@ final class MomentermPairSession: NSObject {
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: MomentermPairSession.boxTrim) }
             .filter { !$0.contains("shortcuts") && !$0.contains("esc to interrupt") }
+            // Strip the sentinel lines: echoed verbatim into the reviewer
+            // prompt, a standalone [[END_TURN]] would satisfy the reviewer's
+            // own turn-end check and cut its review short.
+            .filter { !$0.contains(MomentermPairTurnDetector.endTurnToken) &&
+                      !$0.contains(MomentermPairTurnDetector.approvedToken) }
             .joined(separator: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
         return cleaned
@@ -483,7 +493,12 @@ final class MomentermPairSession: NSObject {
 
         // Drop everything up to and including the echoed injected prompt: the
         // reviewer's own text begins after the diff-path line we sent it.
-        if let pathIdx = lines.lastIndex(where: { $0.contains(".patch") || $0.contains("[과제]") }) {
+        // Anchor on the FIRST line naming the current round's diff file (the
+        // echoed prompt precedes the critique) — anchoring on the last ".patch"
+        // mention would cut at the critique's own citation of the file and
+        // discard the review.
+        let anchor = lastDiffFileName ?? ".patch"
+        if let pathIdx = lines.firstIndex(where: { $0.contains(anchor) || $0.contains("[과제]") }) {
             lines = Array(lines[(pathIdx + 1)...])
         }
 

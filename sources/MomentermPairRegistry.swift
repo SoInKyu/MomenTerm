@@ -64,6 +64,20 @@ final class MomentermPairRegistry: NSObject {
         }
     }
 
+    /// The most recently STARTED live pair whose editor or reviewer is one of
+    /// `sessions` — the array is append-ordered, so `last` is newest. Used by
+    /// the bottom-strip stop control, whose “stop the newest relay in this
+    /// tab” promise must not depend on split-tree pane order.
+    @objc(newestLivePairAmongSessions:)
+    func newestLivePair(among sessions: [PTYSession]) -> MomentermPairSession? {
+        prune()
+        return pairs.last { pair in
+            pair.isRunning && sessions.contains {
+                $0 === pair.editorSession || $0 === pair.reviewerSession
+            }
+        }
+    }
+
     /// Drop finished pairs that involve `session`, removing their leftover
     /// completion-banner borders — called when the session hosts a fresh pair
     /// or is about to go away.

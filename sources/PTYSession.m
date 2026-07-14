@@ -17947,9 +17947,12 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
 }
 
 // See PTYSession.h — the whole visible frame for the pairing orchestrator,
-// whose sentinel line can sit a full pane-height above the composer.
+// whose sentinel line can sit a full pane-height above the composer. Exactly
+// the visible rows, deliberately WITHOUT a scrollback margin: a prior turn's
+// [[END_TURN]] that scrolled off-screen must stop counting, or a stale
+// sentinel just above the top edge could end a turn that never produced one.
 - (NSString *)momentermVisibleScreenTailString {
-    return [self momentermScreenTailString:MAX(40, _screen.height + 8)];
+    return [self momentermScreenTailString:_screen.height];
 }
 
 #pragma mark - MomenTerm session sticker

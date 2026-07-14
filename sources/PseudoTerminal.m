@@ -1577,12 +1577,9 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     MomentermPairRegistry *registry = [MomentermPairRegistry shared];
     MomentermPairSession *live = [registry livePairContaining:[self currentSession]];
     if (!live) {
-        for (PTYSession *session in [[[self currentTab] sessions] reverseObjectEnumerator]) {
-            live = [registry livePairContaining:session];
-            if (live) {
-                break;
-            }
-        }
+        // Registry order = start order; split-tree pane order would pick an
+        // arbitrary pair when several rows are live in the tab.
+        live = [registry newestLivePairAmongSessions:[[self currentTab] sessions]];
     }
     if (live) {
         // stop() paints the completion borders; the pair stays registered
@@ -10716,8 +10713,8 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
         // tmux-controlled (a native pane in a tmux split tree would be
         // clobbered by tmux layout reconciliation).
         PTYTab *hostTab = [self tabForSession:targetSession];
-        if (!hostTab || hostTab.isTmuxTab) {
-            DLog(@"Beep: bottom-row target gone or tmux tab");
+        if (!hostTab || hostTab.isTmuxTab || [self inInstantReplay]) {
+            DLog(@"Beep: bottom-row target gone, tmux tab, or instant replay");
             NSBeep();
             if (completion) {
                 completion(nil, NO);
