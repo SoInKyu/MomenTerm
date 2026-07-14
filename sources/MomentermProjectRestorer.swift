@@ -62,6 +62,12 @@ import AppKit
     /// registry, persist a snapshot into the project record so the next launch can
     /// rehydrate the same workspace.
     @objc func captureAllOnQuit() {
+        // After +releaseSharedInstance the controller is nil for the rest of
+        // the process — nothing left to capture (and unwrapping would crash).
+        guard let controller = iTermController.sharedInstance() else {
+            NSLog("[MomenTerm] captureAllOnQuit: controller already released; skipping")
+            return
+        }
         let registry = MomentermSessionRegistry.shared
         var store = MomentermProjectStorage.shared.load()
 
@@ -73,7 +79,7 @@ import AppKit
             }
         }
 
-        let live = iTermController.sharedInstance().allSessions() ?? []
+        let live = controller.allSessions() ?? []
         // Auto-discover: include sessions whose live cwd matches a known project,
         // even if they were never registered through the sidebar (e.g., opened via
         // ⌘N + manual cd, or revived by iTerm2's own state restoration).

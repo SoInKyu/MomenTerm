@@ -1023,6 +1023,12 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
     DLog(@"Post applicationWillTerminate which triggers saving restorable state.");
     [[NSNotificationCenter defaultCenter] postNotificationName:iTermApplicationWillTerminate object:nil];
 
+    // Snapshot the live project sessions BEFORE the controller is torn down —
+    // releasing it closes every window and terminates every session, after
+    // which working directory, foreground job, and command history are gone
+    // (and +sharedInstance returns nil for the rest of the process).
+    [[MomentermProjectRestorer shared] captureAllOnQuit];
+
     // This causes all windows to be closed and all sessions to be terminated.
     DLog(@"Will release shared instance");
     [iTermController releaseSharedInstance];
@@ -1039,10 +1045,9 @@ static NSModalResponse iTermCompareRenderingRunModal(id self, SEL _cmd) {
 
 - (void)applicationWillTerminate:(NSNotification *)aNotification {
     DLog(@"applicationWillTerminate called");
-    // Snapshot the live project sessions BEFORE the controller is torn down — once
-    // allSessions disappears we lose the ability to read working directory, foreground
-    // job, and command history for each session.
-    [[MomentermProjectRestorer shared] captureAllOnQuit];
+    // Project-session snapshots were taken in -applicationShouldTerminate:,
+    // while the controller (and thus the sessions) still existed. A second
+    // call here would see a nil shared instance and capture nothing.
     [iTermController releaseSharedInstance];
     [[iTermModifierRemapper sharedInstance] setRemapModifiers:NO];
     DLog(@"applicationWillTerminate returning");
