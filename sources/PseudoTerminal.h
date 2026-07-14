@@ -461,8 +461,9 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 - (void)momentermStartPairSessionWithEditor:(PTYSession *)editor
                                    bootDelay:(NSTimeInterval)bootDelay;
 
-// Menu action (⌘⇧D): starts a pair with the current session as editor, or
-// stops the live relay if one is already running.
+// Menu action (⌘⇧D): stops the current pane's live relay if it has one,
+// otherwise starts a new pair with the current session as editor. Different
+// panes can each host their own pair.
 - (IBAction)momentermTogglePairSession:(id)sender;
 
 @end

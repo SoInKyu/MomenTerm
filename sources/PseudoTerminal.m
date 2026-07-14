@@ -251,7 +251,6 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     MomentermGitGraphPanelDelegate,
     MomentermFileEditorPanelDelegate,
     MomentermBottomStripDelegate,
-    MomentermPairSessionDelegate,
     NSComboBoxDelegate,
     NSFontChanging,
     NSMenuItemValidation,
@@ -456,11 +455,6 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     // MomenTerm: full-width bottom strip with inline-panel toggle buttons
     MomentermBottomStripView *_momentermBottomStripView;
     NSTimer *_momentermAttentionTimer;
-
-    // MomenTerm: Codex ⇄ Claude pairing (editor↔reviewer relay) + grouping UI
-    MomentermPairSession *_momentermPairSession;
-    MomentermPairBorderView *_momentermPairEditorBorder;
-    MomentermPairBorderView *_momentermPairReviewerBorder;
 
     // MomenTerm: floating windows that host the inline panels when detached
     NSWindow *_momentermGitGraphDetachedWindow;
@@ -1480,25 +1474,27 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
 // MARK: - MomenTerm AI pairing (Codex ⇄ Claude)
 
-// Toggle: start a relay if none is running, otherwise stop the live one (the
-// user's only in-loop control). Reached from the ⌘⇧D menu item and the
-// bottom-strip pair affordance alike.
+// ⌘⇧D menu action and bottom-strip person.2 affordance: stop the current
+// pane's live relay if it has one, otherwise start a new pair — the current
+// session becomes the editor (claude) and a vertical split hosts the reviewer
+// (codex). Pairs are per-pane, so other panes' relays are untouched and
+// several pairs can coexist in one window.
 - (IBAction)momentermTogglePairSession:(id)sender {
-    if (_momentermPairSession && _momentermPairSession.isRunning) {
-        [self momentermStopPairSession:nil];
-    } else {
-        [self momentermStartPairSession:nil];
+    PTYSession *current = [self currentSession];
+    MomentermPairSession *live = [[MomentermPairRegistry shared] livePairContaining:current];
+    if (live) {
+        // stop() paints the completion borders; the pair stays registered
+        // until its sessions are reused or go away.
+        [live stop];
+        return;
     }
+    // The current pane is already a live shell, so the CLIs can be written
+    // immediately (no boot delay).
+    [self momentermStartPairSessionWithEditor:current bootDelay:0];
 }
 
 - (void)momentermBottomStripDidTapPair {
     [self momentermTogglePairSession:nil];
-}
-
-- (void)momentermStartPairSession:(id)sender {
-    // Bottom-strip toggle: the current pane is already a live shell, so the
-    // CLIs can be written immediately (no boot delay).
-    [self momentermStartPairSessionWithEditor:[self currentSession] bootDelay:0];
 }
 
 // Shared pairing entry point. `editor` becomes the Claude (editing) pane; a
@@ -1507,16 +1503,14 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 // are written — 0 when the editor is already an interactive shell.
 - (void)momentermStartPairSessionWithEditor:(PTYSession *)editor
                                    bootDelay:(NSTimeInterval)bootDelay {
-    // Clear any prior pairing UI/state before starting fresh.
-    [self momentermTeardownPairBorders];
-    [_momentermPairSession stop];
-    [_momentermPairSession release];
-    _momentermPairSession = nil;
-
     if (!editor) {
         NSBeep();
         return;
     }
+    // If the editor pane still wears a finished pair's completion banner,
+    // hosting a fresh pair is the “dismiss” gesture.
+    [[MomentermPairRegistry shared] removeFinishedPairsContaining:editor];
+
     // Split the editor pane to host the reviewer; wire everything up once the
     // new session is ready.
     [self asyncSplitVertically:YES
@@ -1532,15 +1526,19 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
         if (bootDelay > 0) {
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(bootDelay * NSEC_PER_SEC)),
                            dispatch_get_main_queue(), ^{
-                [self momentermBeginPairWithEditor:editor reviewer:reviewer];
+                [PseudoTerminal momentermBeginPairWithEditor:editor reviewer:reviewer];
             });
         } else {
-            [self momentermBeginPairWithEditor:editor reviewer:reviewer];
+            [PseudoTerminal momentermBeginPairWithEditor:editor reviewer:reviewer];
         }
     }];
 }
 
-- (void)momentermBeginPairWithEditor:(PTYSession *)editor reviewer:(PTYSession *)reviewer {
++ (void)momentermBeginPairWithEditor:(PTYSession *)editor reviewer:(PTYSession *)reviewer {
+    if (editor.exited || reviewer.exited) {
+        NSBeep();
+        return;
+    }
     // Launch the two CLIs: editor = claude (edits), reviewer = codex (reviews).
     //
     // The editor carries the turn-sentinel instruction as an appended system
@@ -1555,87 +1553,16 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     [editor writeTask:@"claude --dangerously-skip-permissions --append-system-prompt '당신은 두 AI 페어 리뷰의 편집자입니다. 모든 답변의 맨 마지막 줄에 [[END_TURN]] 을 단독으로 출력해 턴의 끝을 표시하세요.'\n"];
     [reviewer writeTask:@"codex\n"];
 
-    // Neon grouping borders + turn-direction pills.
-    _momentermPairEditorBorder = [[MomentermPairBorderView alloc] initWithRole:MomentermPairRoleEditor];
-    _momentermPairReviewerBorder = [[MomentermPairBorderView alloc] initWithRole:MomentermPairRoleReviewer];
-    [_momentermPairEditorBorder attachTo:editor.view];
-    [_momentermPairReviewerBorder attachTo:reviewer.view];
-
-    // Orchestrator. There is no seed sheet: the user types the task straight
-    // into the editor (claude) pane, and the orchestrator opens the review
-    // relay once the editor's first turn ends.
-    _momentermPairSession = [[MomentermPairSession alloc] init];
-    _momentermPairSession.delegate = self;
-    [_momentermPairSession startWithEditor:editor reviewer:reviewer];
-}
-
-- (void)momentermStopPairSession:(id)sender {
-    // stop() drives the finish delegate (stoppedByUser), which paints the
-    // completion borders and releases the orchestrator.
-    [_momentermPairSession stop];
-}
-
-// While a relay is live its two panes are one unit — closing either one must
-// close both. Returns the other pane of the live pair, or nil when `session`
-// is not part of a running relay (finished pairs are independent panes again).
-- (PTYSession *)momentermLivePairPartnerOf:(PTYSession *)session {
-    if (!_momentermPairSession || !_momentermPairSession.isRunning) {
-        return nil;
-    }
-    if (session == _momentermPairSession.editorSession) {
-        return _momentermPairSession.reviewerSession;
-    }
-    if (session == _momentermPairSession.reviewerSession) {
-        return _momentermPairSession.editorSession;
-    }
-    return nil;
-}
-
-- (void)momentermTeardownPairBorders {
-    [_momentermPairEditorBorder detach];
-    [_momentermPairEditorBorder release];
-    _momentermPairEditorBorder = nil;
-    [_momentermPairReviewerBorder detach];
-    [_momentermPairReviewerBorder release];
-    _momentermPairReviewerBorder = nil;
-}
-
-// MARK: - MomentermPairSessionDelegate
-
-- (void)pairSession:(MomentermPairSession *)session
-    activeSpeakerDidChange:(MomentermPairRole)role {
-    const BOOL editorActive = (role == MomentermPairRoleEditor);
-    [_momentermPairEditorBorder setActive:editorActive];
-    [_momentermPairReviewerBorder setActive:!editorActive];
-}
-
-- (void)pairSession:(MomentermPairSession *)session
-       didFinishWith:(MomentermPairOutcome)outcome
-          roundCount:(NSInteger)roundCount {
-    NSString *text = @"";
-    NSColor *color = [NSColor systemGrayColor];
-    switch (outcome) {
-        case MomentermPairOutcomeApproved:
-            text = [NSString stringWithFormat:@"승인됨 (%ld라운드)", (long)roundCount];
-            color = [NSColor systemGreenColor];
-            break;
-        case MomentermPairOutcomeRoundCapReached:
-            text = [NSString stringWithFormat:@"라운드 상한 도달 (%ld)", (long)roundCount];
-            color = [NSColor systemOrangeColor];
-            break;
-        case MomentermPairOutcomeStoppedByUser:
-            text = @"정지됨";
-            color = [NSColor systemGrayColor];
-            break;
-        case MomentermPairOutcomeSessionDied:
-            text = @"세션 종료";
-            color = [NSColor systemRedColor];
-            break;
-    }
-    [_momentermPairEditorBorder showCompletionWithText:text color:color];
-    [_momentermPairReviewerBorder showCompletionWithText:text color:color];
-    [_momentermPairSession release];
-    _momentermPairSession = nil;
+    // Orchestrator. It owns its own grouping borders, so multiple pairs can
+    // run side by side. There is no seed sheet: the user types the task
+    // straight into the editor (claude) pane, and the orchestrator opens the
+    // review relay once the editor's first turn ends. Panes can be dragged to
+    // other tabs or windows mid-relay, so the pair registers app-wide rather
+    // than with this window.
+    MomentermPairSession *pair = [[MomentermPairSession alloc] init];
+    [[MomentermPairRegistry shared] add:pair];
+    [pair release];
+    [pair startWithEditor:editor reviewer:reviewer];
 }
 
 // 1 Hz tick — for each session in this window, lights the per-pane attention
@@ -1941,7 +1868,10 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
                                   completion:^(PTYSession * _Nullable session) {
             registerSession(session);
             if (startEditReview && session) {
-                [self momentermStartPairSessionWithEditor:session bootDelay:0.7];
+                // The session may have landed in a different window; split
+                // there, not in the sidebar's window.
+                PseudoTerminal *term = [[iTermController sharedInstance] terminalWithSession:session];
+                [term momentermStartPairSessionWithEditor:session bootDelay:0.7];
             }
         }];
     }
@@ -2123,11 +2053,10 @@ ITERM_WEAKLY_REFERENCEABLE
     [[NSNotificationCenter defaultCenter] removeObserver:self];
     [[[NSWorkspace sharedWorkspace] notificationCenter] removeObserver:self];
 
-    // MomenTerm: tear down any live pairing relay + grouping borders.
-    [_momentermPairSession stop];
-    [_momentermPairSession release];
-    _momentermPairSession = nil;
-    [self momentermTeardownPairBorders];
+    // MomenTerm: stop any pairing relays that involve this window's sessions.
+    // A pair spans two windows, so the partner window survives; its border
+    // keeps the completion banner painted by stop().
+    [[MomentermPairRegistry shared] stopPairsContainingAnyOf:[self allSessions]];
 
     // Release all our sessions.
     if (_contentView.tabBarControl.delegate == self) {
@@ -2635,17 +2564,27 @@ ITERM_WEAKLY_REFERENCEABLE
     return NSNotFound;
 }
 
-- (void)closeSession:(PTYSession *)aSession soft:(BOOL)soft {
-    // MomenTerm: a live AI pair lives and dies as a unit. Stop the relay
-    // first — that releases the orchestrator, so the recursive close of the
-    // partner finds no running pair and takes the normal path.
-    PTYSession *pairPartner = [self momentermLivePairPartnerOf:aSession];
-    if (pairPartner) {
-        [_momentermPairSession stop];
-        if (!pairPartner.exited && [[self allSessions] containsObject:pairPartner]) {
-            [self closeSession:pairPartner soft:soft];
-        }
+// MomenTerm: a live AI pair lives and dies as a unit — and spans two windows.
+// If `aSession` belongs to a live relay, stop it and close the partner
+// session in whichever window hosts it. The partner's own close then finds no
+// running pair and takes the normal path. Other live pairs are untouched.
+- (void)momentermCloseLivePairPartnerOf:(PTYSession *)aSession soft:(BOOL)soft {
+    MomentermPairSession *livePair = [[MomentermPairRegistry shared] livePairContaining:aSession];
+    if (!livePair) {
+        return;
     }
+    PTYSession *pairPartner = (aSession == livePair.editorSession)
+        ? livePair.reviewerSession
+        : livePair.editorSession;
+    [livePair stop];
+    if (pairPartner && !pairPartner.exited) {
+        PseudoTerminal *partnerTerm = [[iTermController sharedInstance] terminalWithSession:pairPartner];
+        [partnerTerm closeSession:pairPartner soft:soft];
+    }
+}
+
+- (void)closeSession:(PTYSession *)aSession soft:(BOOL)soft {
+    [self momentermCloseLivePairPartnerOf:aSession soft:soft];
     if (!soft &&
         [aSession isTmuxClient] &&
         [[aSession tmuxController] isAttached]) {
@@ -3101,6 +3040,13 @@ ITERM_WEAKLY_REFERENCEABLE
 }
 
 - (void)closeTab:(PTYTab *)aTab soft:(BOOL)soft {
+    // MomenTerm: some close paths (e.g. ⌘W on a single-session tab after a
+    // pair pane was dragged out) arrive here without passing through
+    // closeSession:soft:, so the pair-unit close must live here too — closing
+    // either pane of a live pair takes its partner with it.
+    for (PTYSession *session in [[[aTab sessions] copy] autorelease]) {
+        [self momentermCloseLivePairPartnerOf:session soft:soft];
+    }
     if (!soft &&
         [self tabIsAttachedTmuxTabWithSessions:aTab]) {
         if ([self numberOfTabsWithTmuxController:aTab.tmuxController] == 1) {

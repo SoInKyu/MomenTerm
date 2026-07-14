@@ -3,7 +3,8 @@
 //  iTerm2
 //
 //  Orchestrator for the Codex ⇄ Claude pairing feature. Drives a relay between
-//  two live CLI panes:
+//  two live CLI panes — split panes in one window (editor on the left, a
+//  vertical split hosting the reviewer on the right):
 //
 //    • editor (claude)   — edits files in the repo to implement the seeded task
 //    • reviewer (codex)  — read-only; reviews the editor's git diff and either
@@ -58,18 +59,6 @@ enum MomentermPairOutcome: Int {
     case sessionDied      // one of the panes exited
 }
 
-@objc(MomentermPairSessionDelegate)
-protocol MomentermPairSessionDelegate: AnyObject {
-    /// The relay has begun and `role` is the first/next speaker. Used to point
-    /// the neon direction indicator at the active pane.
-    @objc optional func pairSession(_ session: MomentermPairSession,
-                                    activeSpeakerDidChange role: MomentermPairRole)
-    /// Terminal state reached. Panes are left alive; show a completion banner.
-    @objc optional func pairSession(_ session: MomentermPairSession,
-                                    didFinishWith outcome: MomentermPairOutcome,
-                                    roundCount: Int)
-}
-
 @objc(MomentermPairSession)
 final class MomentermPairSession: NSObject {
 
@@ -86,9 +75,16 @@ final class MomentermPairSession: NSObject {
     @objc private(set) var roundCount: Int = 0
     @objc private(set) var isRunning: Bool = false
 
-    @objc weak var delegate: MomentermPairSessionDelegate?
     @objc private(set) weak var editorSession: PTYSession?
     @objc private(set) weak var reviewerSession: PTYSession?
+
+    // Grouping borders. Owned per pair, so any number of pairs can coexist in
+    // one window, each painting only its own two panes. Attached in start();
+    // after finish() they stay on as the completion banner (the view hierarchy
+    // keeps them alive) until detachBorders() removes them — when the window
+    // reuses a pane for a fresh pair, or tears everything down.
+    private var editorBorder: MomentermPairBorderView?
+    private var reviewerBorder: MomentermPairBorderView?
 
     // MARK: State
     private enum Phase {
@@ -160,13 +156,32 @@ final class MomentermPairSession: NSObject {
         RunLoop.main.add(t, forMode: .common)
         timer = t
 
-        // The user types into the editor first, so point the neon direction
-        // indicator at it right away.
-        delegate?.pairSession?(self, activeSpeakerDidChange: .editor)
+        // Neon grouping borders + turn-direction pills. The user types into
+        // the editor first, so point the direction indicator at it right away.
+        let eb = MomentermPairBorderView(role: .editor)
+        let rb = MomentermPairBorderView(role: .reviewer)
+        eb.attach(to: editor.view)
+        rb.attach(to: reviewer.view)
+        editorBorder = eb
+        reviewerBorder = rb
+        setActiveSpeaker(.editor)
     }
 
     @objc func stop() {
         finish(.stoppedByUser)
+    }
+
+    /// Remove this pair's grouping borders (live or completion banner).
+    @objc func detachBorders() {
+        editorBorder?.detach()
+        reviewerBorder?.detach()
+        editorBorder = nil
+        reviewerBorder = nil
+    }
+
+    private func setActiveSpeaker(_ role: MomentermPairRole) {
+        editorBorder?.setActive(role == .editor)
+        reviewerBorder?.setActive(role == .reviewer)
     }
 
     private func finish(_ outcome: MomentermPairOutcome) {
@@ -176,7 +191,27 @@ final class MomentermPairSession: NSObject {
         timer?.invalidate()
         timer = nil
         DLog("MomentermPairSession finished: outcome=\(outcome.rawValue) rounds=\(roundCount)")
-        delegate?.pairSession?(self, didFinishWith: outcome, roundCount: roundCount)
+
+        // Terminal state: paint the completion banner on both borders. Panes
+        // are left alive and go back to normal dimming rules.
+        let text: String
+        let color: NSColor
+        switch outcome {
+        case .approved:
+            text = "승인됨 (\(roundCount)라운드)"
+            color = .systemGreen
+        case .roundCapReached:
+            text = "라운드 상한 도달 (\(roundCount))"
+            color = .systemOrange
+        case .stoppedByUser:
+            text = "정지됨"
+            color = .systemGray
+        case .sessionDied:
+            text = "세션 종료"
+            color = .systemRed
+        }
+        editorBorder?.showCompletion(text: text, color: color)
+        reviewerBorder?.showCompletion(text: text, color: color)
     }
 
     // MARK: - Poll loop
@@ -277,7 +312,7 @@ final class MomentermPairSession: NSObject {
 
     private func enter(_ newPhase: Phase, speaker: MomentermPairRole) {
         phase = newPhase
-        delegate?.pairSession?(self, activeSpeakerDidChange: speaker)
+        setActiveSpeaker(speaker)
     }
 
     // MARK: - Turn detection

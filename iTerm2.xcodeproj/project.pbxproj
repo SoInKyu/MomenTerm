@@ -5230,6 +5230,7 @@
 		AD82AA37B3EB2A9CDAF13F1C /* MomentermMarkdownTemplate.html in Resources */ = {isa = PBXBuildFile; fileRef = E1DCDB86FBBA5C3B72776075 /* MomentermMarkdownTemplate.html */; };
 		B2CA85E23B4CCCC3391BA025 /* NotifyingDictionary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 877B9444B69DE32D9CF87354 /* NotifyingDictionary.swift */; };
 		B325496AFB5EEB47C94C112D /* MomentermBottomStripView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EC6DC68462E38E2296A6F0A5 /* MomentermBottomStripView.swift */; };
+		B837D03E3252C33B1DBEABF4 /* MomentermPairRegistry.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DB03CD24167A9A5087C1627 /* MomentermPairRegistry.swift */; };
 		BD04640ABED4FDE0CAA9C809 /* MomentermWelcomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A96DF47553BD99532CC7CB4 /* MomentermWelcomeView.swift */; };
 		C48D7AA2E70B019313C401F3 /* WordSelectionAtom.swift in Sources */ = {isa = PBXBuildFile; fileRef = C08AA4008946722C3F4C67C1 /* WordSelectionAtom.swift */; };
 		C5F394249CF581965B22B714 /* GlobalJobMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA34A6F29B10471D8FD572F6 /* GlobalJobMonitor.swift */; };
@@ -5952,6 +5953,7 @@
 		1DAE714C14AAF24200DA144B /* EquivalenceClassSet.m */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.objc; path = EquivalenceClassSet.m; sourceTree = "<group>"; tabWidth = 4; };
 		1DAED99012EDF923005E49ED /* iTermSearchField.h */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.h; path = iTermSearchField.h; sourceTree = "<group>"; tabWidth = 4; };
 		1DAED99112EDF923005E49ED /* iTermSearchField.m */ = {isa = PBXFileReference; fileEncoding = 4; indentWidth = 4; lastKnownFileType = sourcecode.c.objc; path = iTermSearchField.m; sourceTree = "<group>"; tabWidth = 4; };
+		1DB03CD24167A9A5087C1627 /* MomentermPairRegistry.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MomentermPairRegistry.swift; sourceTree = "<group>"; };
 		1DB40A3E1B1FDC75005B83C7 /* NoColor.png */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; name = NoColor.png; path = images/NoColor.png; sourceTree = "<group>"; };
 		1DB40A3F1B1FDC75005B83C7 /* NoColor@2x.png */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; name = "NoColor@2x.png"; path = "images/NoColor@2x.png"; sourceTree = "<group>"; };
 		1DB40A9F1B221028005B83C7 /* iTermNoColorAccessoryButton.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = iTermNoColorAccessoryButton.h; sourceTree = "<group>"; };
@@ -9787,6 +9789,7 @@
 				06FC23964D4046ED0CE534AA /* MomentermPairTurnDetector.swift */,
 				AE14E07765C38031FFCAF16F /* MomentermPairSession.swift */,
 				E46E17BFCF2E1CA8BE485D81 /* MomentermPairBorderView.swift */,
+				1DB03CD24167A9A5087C1627 /* MomentermPairRegistry.swift */,
 			);
 			name = Classes;
 			path = sources/;
@@ -20577,6 +20580,7 @@
 				7DEFAA5398B46ED7E14EBC5B /* MomentermPairTurnDetector.swift in Sources */,
 				41E4F99A81F11952B33C0A21 /* MomentermPairSession.swift in Sources */,
 				61921980B704B7334DB56774 /* MomentermPairBorderView.swift in Sources */,
+				B837D03E3252C33B1DBEABF4 /* MomentermPairRegistry.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
