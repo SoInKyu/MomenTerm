@@ -17924,13 +17924,21 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
     VT100GridWindowedRange range = VT100GridWindowedRangeMake(
         VT100GridCoordRangeMake(0, startY, _screen.width, endY),
         0, 0);
+    // Size the cap to the requested range instead of a fixed constant: when
+    // the cap is hit, the extractor drops the HEAD of the text — for the
+    // pairing orchestrator that is exactly where the [[END_TURN]] sentinel
+    // sits (composer pinned to the bottom, response at the top), so a dense
+    // oversized frame must never be able to truncate it away. The requested
+    // range bounds the cost; the floor keeps small requests cheap-bounded.
+    const NSInteger cap = MAX(32 * 1024,
+                              (NSInteger)numberOfLines * ((NSInteger)_screen.width + 2));
     id result = [extractor contentInRange:range
                         attributeProvider:nil
                                nullPolicy:kiTermTextExtractorNullPolicyTreatAsSpace
                                       pad:NO
                        includeLastNewline:YES
                    trimTrailingWhitespace:YES
-                             cappedAtSize:32 * 1024
+                             cappedAtSize:cap
                              truncateTail:NO
                         continuationChars:nil
                                    coords:nil

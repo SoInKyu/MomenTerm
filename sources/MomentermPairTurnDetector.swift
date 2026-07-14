@@ -147,16 +147,23 @@ final class MomentermPairTurnDetector: NSObject {
         return Set(braille)
     }()
 
-    // Claude Code v2's live progress line: a sparkle glyph, a gerund, and an
-    // ellipsis — “✳ Jitterbugging…”, growing counters after a while:
-    // “✳ Frolicking… (2m 6s · ↓ 1.3k tokens)”. The parenthesized part is NOT
-    // reliable: short turns never grow it (captured live), so only the
-    // sparkle + ellipsis shape is required. It shows neither braille spinners
-    // nor “esc to interrupt”, so it needs its own matcher. The FINISHED form
-    // (“✻ Worked for 9s”) has no ellipsis and must NOT match — the sparkle
-    // glyphs alone are useless as a signal because they persist there.
+    // Claude Code v2's live progress line: a sparkle glyph, ONE gerund with
+    // the ellipsis attached, optional counters after — “✳ Jitterbugging…”,
+    // later “✳ Frolicking… (2m 6s · ↓ 1.3k tokens)”. The parenthesized part
+    // is NOT reliable: short turns never grow it (captured live), so only the
+    // sparkle + word-with-ellipsis shape is required. It shows neither
+    // braille spinners nor “esc to interrupt”, so it needs its own matcher.
+    // Deliberately strict about false positives, which pin the state at
+    // .working and wedge the relay the other way:
+    //   • the FINISHED form (“✻ Worked for 9s”) has no ellipsis — no match;
+    //   • ‘·’ (middle dot) is excluded even though it is one of the animation
+    //     frames — it doubles as a plain list bullet in prose, and losing one
+    //     of six frames barely matters when the 1 Hz tick only needs to catch
+    //     a single frame per turn;
+    //   • the ellipsis must be glued to the first word, so a prose line like
+    //     “✻ 파일 로딩… 완료” (word, space, word-with-ellipsis) cannot match.
     private static let sparkleProgressRegex = try? NSRegularExpression(
-        pattern: "(?m)^\\s*[·✢✳✶✻✽]\\s+\\S[^\\n]*…", options: [])
+        pattern: "(?m)^\\s*[✢✳✶✻✽]\\s+\\S+…", options: [])
 
     private static func looksWorking(_ tail: String) -> Bool {
         if tail.contains(where: { spinnerScalars.contains($0) }) {

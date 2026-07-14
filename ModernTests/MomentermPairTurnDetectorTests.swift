@@ -73,9 +73,10 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
 
     // Short turns never grow the parenthesized counters — the live frame is
     // just “✳ Jitterbugging…” (captured at 0.4s intervals from a real pane).
-    // Requiring the “(” made observedWorking miss every fast turn.
+    // Requiring the “(” made observedWorking miss every fast turn. The ‘·’
+    // frame is deliberately NOT matched (prose-bullet false positive).
     func testWorkingOnBareSparkleProgressLine() {
-        for glyph in ["·", "✢", "✳", "✶", "✻", "✽"] {
+        for glyph in ["✢", "✳", "✶", "✻", "✽"] {
             let tail = "❯ 1 더하기 1은?\n\(glyph) Jitterbugging…"
             XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .working,
                            "glyph \(glyph) should read as working")
@@ -85,6 +86,16 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
     func testReadyOnFinishedWorkedForLine() {
         let tail = "  [[END_TURN]]\n✻ Worked for 9s\n❯ "
         XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .ready)
+    }
+
+    // Prose lines must not pin the state at .working: a middle-dot bullet
+    // with a trailing ellipsis, and a sparkle line whose ellipsis is NOT
+    // glued to the first word, both read as ready.
+    func testReadyOnProseLinesResemblingProgress() {
+        let bulletTail = "· 파일 로딩 작업 정리…\n❯ "
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: bulletTail), .ready)
+        let sparkleProseTail = "✻ 파일 로딩… 완료\n❯ "
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: sparkleProseTail), .ready)
     }
 
     // The FINISHED form of the same line has no parenthesized live counters

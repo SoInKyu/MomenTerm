@@ -22,7 +22,28 @@ final class MomentermPairRegistry: NSObject {
     private var ordinalCounter = 0
 
     @objc func add(_ pair: MomentermPairSession) {
+        prune()
         pairs.append(pair)
+    }
+
+    /// Drop pairs whose panes are BOTH gone (weak refs zeroed) — nothing can
+    /// query them by session anymore, so they would otherwise accumulate for
+    /// the app's lifetime, leaking the relay object and its border views.
+    /// Run on every mutation/query so the array stays bounded by live pairs
+    /// plus finished pairs whose panes still exist (completion banners).
+    private func prune() {
+        pairs.removeAll { pair in
+            guard pair.editorSession == nil && pair.reviewerSession == nil else {
+                return false
+            }
+            if pair.isRunning {
+                // Both panes died without any close path stopping the relay
+                // (the 1 Hz tick would notice eventually; don't wait for it).
+                pair.stop()
+            }
+            pair.detachBorders()
+            return true
+        }
     }
 
     /// Monotonically increasing pair number, used to pick each pair's accent
@@ -37,6 +58,7 @@ final class MomentermPairRegistry: NSObject {
     @objc(livePairContaining:)
     func livePair(containing session: PTYSession?) -> MomentermPairSession? {
         guard let session else { return nil }
+        prune()
         return pairs.first {
             $0.isRunning && ($0.editorSession === session || $0.reviewerSession === session)
         }
@@ -48,6 +70,7 @@ final class MomentermPairRegistry: NSObject {
     @objc(removeFinishedPairsContaining:)
     func removeFinishedPairs(containing session: PTYSession?) {
         guard let session else { return }
+        prune()
         pairs.removeAll { pair in
             guard !pair.isRunning,
                   pair.editorSession === session || pair.reviewerSession === session else {
@@ -63,6 +86,7 @@ final class MomentermPairRegistry: NSObject {
     /// its completion banner; pairs whose sessions are both gone are pruned.
     @objc(stopPairsContainingAnyOf:)
     func stopPairs(containingAnyOf sessions: [PTYSession]) {
+        prune()
         pairs.removeAll { pair in
             if pair.editorSession == nil && pair.reviewerSession == nil {
                 pair.detachBorders()

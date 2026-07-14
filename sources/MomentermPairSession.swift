@@ -148,8 +148,7 @@ final class MomentermPairSession: NSObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         scratchDir = dir
 
-        NSLog("[MomenTerm] pair start: editor=%@ reviewer=%@ cwd=%@",
-              editor.guid ?? "?", reviewer.guid ?? "?", editorCwd)
+        DLog("MomentermPairSession start: editor=\(editor.guid ?? "?") reviewer=\(reviewer.guid ?? "?") cwd=\(editorCwd)")
         let t = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -194,7 +193,7 @@ final class MomentermPairSession: NSObject {
         phase = .finished
         timer?.invalidate()
         timer = nil
-        NSLog("[MomenTerm] pair finished: outcome=%d rounds=%d", outcome.rawValue, roundCount)
+        DLog("MomentermPairSession finished: outcome=\(outcome.rawValue) rounds=\(roundCount)")
 
         // Terminal state: paint the completion banner on both borders. Panes
         // are left alive and go back to normal dimming rules.
@@ -254,7 +253,7 @@ final class MomentermPairSession: NSObject {
         if !sawReadyComposer {
             if MomentermPairTurnDetector.turnState(tail: tail(editor)) == .ready {
                 sawReadyComposer = true
-                NSLog("[MomenTerm] pair: editor composer ready (boot complete)")
+                DLog("MomentermPairSession: editor composer ready (boot complete)")
             } else if nowRef() - startTime < bootGrace {
                 return
             }
@@ -264,7 +263,7 @@ final class MomentermPairSession: NSObject {
         // until the user submits a task there is nothing to relay.
         noteWorking(editor)
         guard turnEnded(editor) else { return }
-        NSLog("[MomenTerm] pair: first editor turn ended → relaying diff to reviewer")
+        DLog("MomentermPairSession: first editor turn ended → relaying diff to reviewer")
         capturedTaskContext = captureEditorContext(editor)
         relayDiffToReviewer()
     }
@@ -334,7 +333,7 @@ final class MomentermPairSession: NSObject {
         guard !observedWorkingThisTurn else { return }
         if MomentermPairTurnDetector.turnState(tail: tail(session)) == .working {
             observedWorkingThisTurn = true
-            NSLog("[MomenTerm] pair: observed speaker working this turn")
+            DLog("MomentermPairSession: observed speaker working this turn")
         }
     }
 
@@ -425,7 +424,7 @@ final class MomentermPairSession: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak session] in
             session?.writeTask("\r")
         }
-        NSLog("[MomenTerm] pair: injected %d chars into %@", text.count, session.guid ?? "?")
+        DLog("MomentermPairSession: injected \(text.count) chars into \(session.guid ?? "?")")
     }
 
     // MARK: - Prompts (curly quotes per project convention)
@@ -452,7 +451,7 @@ final class MomentermPairSession: NSObject {
             ? "편집자에게 주어진 과제 원문은 확보하지 못했습니다. diff 자체에서 의도를 추론해 검토하세요."
             : "다음은 편집자 세션의 최근 화면입니다(사용자 과제와 진행 상황이 담겨 있습니다):\n\(capturedTaskContext)"
         return """
-        당신은 두 AI 페어링에서 ‘검토자’(읽기 전용)입니다. 아래 맥락을 기준으로 편집자의 변경을 검토하세요. 충분히 충족하면 마지막에 [[APPROVED]] 를 단독 줄로 출력하고, 그렇지 않으면 구체적이고 실행 가능한 피드백을 준 뒤 마지막에 [[END_TURN]] 을 단독 줄로 출력하세요.
+        당신은 두 AI 페어링에서 ‘검토자’(읽기 전용)입니다. 아래 맥락을 기준으로 편집자의 변경을 검토하세요. 충분히 충족하면 마지막에 \(MomentermPairTurnDetector.approvedToken) 를 단독 줄로 출력하고, 그렇지 않으면 구체적이고 실행 가능한 피드백을 준 뒤 마지막에 \(MomentermPairTurnDetector.endTurnToken) 을 단독 줄로 출력하세요.
 
         [맥락]
         \(contextNote)
@@ -467,7 +466,7 @@ final class MomentermPairSession: NSObject {
 
         \(comments)
 
-        반영해 수정하세요. 매 턴이 끝나면 마지막에 [[END_TURN]] 을 단독 줄로 출력하세요.
+        반영해 수정하세요. 매 턴이 끝나면 마지막에 \(MomentermPairTurnDetector.endTurnToken) 을 단독 줄로 출력하세요.
         """
     }
 

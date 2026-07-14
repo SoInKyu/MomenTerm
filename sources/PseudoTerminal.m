@@ -1567,11 +1567,23 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     return [[MomentermSessionRegistry shared] momentermIsEditReviewSessionWithGuid:guid];
 }
 
-// Bottom-strip person.2 affordance keeps toggle semantics: stop the current
-// pane's live pair if it has one, otherwise add a fresh pair to this tab.
+// Bottom-strip person.2 affordance keeps toggle semantics: stop a live pair
+// in the current tab if there is one, otherwise add a fresh pair. The stop
+// side must not depend on which pane has focus — during a relay the user's
+// focus is normally on their own shell (typing into a pair pane would feed
+// the CLIs), so scan the whole tab: prefer the focused pane's pair, else the
+// most recently started live pair in the tab.
 - (void)momentermBottomStripDidTapPair {
-    PTYSession *current = [self currentSession];
-    MomentermPairSession *live = [[MomentermPairRegistry shared] livePairContaining:current];
+    MomentermPairRegistry *registry = [MomentermPairRegistry shared];
+    MomentermPairSession *live = [registry livePairContaining:[self currentSession]];
+    if (!live) {
+        for (PTYSession *session in [[[self currentTab] sessions] reverseObjectEnumerator]) {
+            live = [registry livePairContaining:session];
+            if (live) {
+                break;
+            }
+        }
+    }
     if (live) {
         // stop() paints the completion borders; the pair stays registered
         // until its sessions are reused or go away.
@@ -1634,7 +1646,12 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     // makes every turn — including that first user-typed one — end with a
     // detectable [[END_TURN]] line, with nothing injected into the input stream
     // ahead of the user.
-    [editor writeTask:@"claude --dangerously-skip-permissions --append-system-prompt '당신은 두 AI 페어 리뷰의 편집자입니다. 모든 답변의 맨 마지막 줄에 [[END_TURN]] 을 단독으로 출력해 턴의 끝을 표시하세요.'\n"];
+    NSString *editorCommand =
+        [NSString stringWithFormat:
+             @"claude --dangerously-skip-permissions --append-system-prompt "
+             @"'당신은 두 AI 페어 리뷰의 편집자입니다. 모든 답변의 맨 마지막 줄에 %@ 을 단독으로 출력해 턴의 끝을 표시하세요.'\n",
+             MomentermPairTurnDetector.endTurnToken];
+    [editor writeTask:editorCommand];
     [reviewer writeTask:@"codex\n"];
 
     // Orchestrator. It owns its own grouping borders, so multiple pairs can
@@ -10689,10 +10706,28 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     // (and the user can switch tabs while the async pwd fetch runs), so
     // measure the tab that will actually host the split.
     PTYTab *tabToSplit = [self tabForSession:targetSession] ?: [self currentTab];
-    if (![self canSplitPaneVertically:isVertical
-                          withBookmark:theBookmark
-                                 inTab:tabToSplit
-                         targetSession:targetSession]) {
+    if (momentermBottomRow) {
+        // Bottom-row insertion targets the ROOT of the tab that hosts
+        // targetSession, not the pane itself, so the per-pane minimum-size
+        // check below would measure the wrong container (refusing layouts
+        // that can easily host a full-width row). Instead: require that the
+        // target pane still exists — never fall back to whatever tab became
+        // current during the async pwd fetch — and that its tab is not
+        // tmux-controlled (a native pane in a tmux split tree would be
+        // clobbered by tmux layout reconciliation).
+        PTYTab *hostTab = [self tabForSession:targetSession];
+        if (!hostTab || hostTab.isTmuxTab) {
+            DLog(@"Beep: bottom-row target gone or tmux tab");
+            NSBeep();
+            if (completion) {
+                completion(nil, NO);
+            }
+            return nil;
+        }
+    } else if (![self canSplitPaneVertically:isVertical
+                                withBookmark:theBookmark
+                                       inTab:tabToSplit
+                               targetSession:targetSession]) {
         DLog(@"Beep: can't split");
         NSBeep();
         if (completion) {
