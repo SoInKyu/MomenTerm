@@ -2090,7 +2090,16 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
 }
 
 - (BOOL)canSplitVertically:(BOOL)isVertical withSize:(NSSize)newSessionSize {
-    NSSplitView *parentSplit = (NSSplitView *)[[activeSession_ view] superview];
+    return [self canSplitVertically:isVertical withSize:newSessionSize targetSession:activeSession_];
+}
+
+// The split lands next to targetSession, which need not be the active session
+// — async split requests (e.g. AI pairing) can outlive a focus change.
+- (BOOL)canSplitVertically:(BOOL)isVertical
+                  withSize:(NSSize)newSessionSize
+             targetSession:(PTYSession *)targetSession {
+    PTYSession *session = targetSession ?: activeSession_;
+    NSSplitView *parentSplit = (NSSplitView *)[[session view] superview];
     if (isVertical == [parentSplit isVertical]) {
         // Add a child to parentSplit.
         // This is a slightly bogus heuristic: if any sibling of the active session has a violated min
@@ -2116,11 +2125,11 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
         }
         return YES;
     } else {
-        // Active session will be replaced with a splitter.
-        // Another bogus heuristic: if the active session's constraints have been violated then you
+        // The target session will be replaced with a splitter.
+        // Another bogus heuristic: if the target session's constraints have been violated then you
         // can't split.
-        NSSize actualSize = [[activeSession_ view] frame].size;
-        NSSize minSize = [self _minSessionSize:[activeSession_ view]
+        NSSize actualSize = [[session view] frame].size;
+        NSSize minSize = [self _minSessionSize:[session view]
                                 respectPinning:isVertical];
         if (isVertical && actualSize.width < minSize.width) {
             DLog(@"Not enough width for vertical split");
@@ -2297,6 +2306,56 @@ static void SetAgainstGrainDim(BOOL isVertical, NSSize *dest, CGFloat value) {
     newSession.view = newView;
     [self.viewToSessionMap setObject:newSession forKey:newView];
     [self checkInvariants:@"After splitting"];
+    newSession.useMetal = NO;
+    [self updateUseMetal];
+}
+
+// MomenTerm: append `newSession` as a full-width row at the very bottom of
+// root_, whatever the current tree looks like. splitVertically:newSession:…
+// can only insert next to a target SESSION (inside that session's parent
+// split), so a pair row created from a pane in a side-by-side split would
+// only span that pane's width — this inserts at the root level instead.
+- (void)momentermAddBottomRowSession:(PTYSession *)newSession {
+    if (isMaximized_) {
+        [self unmaximize];
+    }
+    NSView *last = [[root_ subviews] lastObject];
+    assert(last != nil);
+    SessionView *newView = [[SessionView alloc] initWithFrame:[last frame]];
+    [self checkInvariants:@"Before adding bottom row"];
+    if ([[root_ subviews] count] == 1) {
+        // Single pane: turn the root into a horizontal stack of [pane, row].
+        [root_ setVertical:NO];
+        [root_ addSubview:newView positioned:NSWindowAbove relativeTo:last];
+    } else if (![root_ isVertical]) {
+        // Root already stacks rows: append after the last one.
+        [root_ addSubview:newView positioned:NSWindowAbove relativeTo:last];
+    } else {
+        // Root is a side-by-side split: sink its children into a wrapper
+        // split, then turn the root into a horizontal stack of
+        // [wrapper, new row] so the row spans the full tab width.
+        NSSplitView *wrapper = [[PTYSplitView alloc] initWithFrame:[root_ bounds]];
+        if (USE_THIN_SPLITTERS) {
+            [wrapper setDividerStyle:NSSplitViewDividerStyleThin];
+        }
+        [wrapper setAutoresizesSubviews:YES];
+        [wrapper setDelegate:self];
+        [wrapper setVertical:YES];
+        for (NSView *child in [[root_ subviews] copy]) {
+            [child removeFromSuperview];
+            [wrapper addSubview:child];
+        }
+        [root_ setVertical:NO];
+        [root_ addSubview:wrapper];
+        [root_ addSubview:newView];
+        [wrapper adjustSubviews];
+    }
+    [self adjustSubviewsOf:root_];
+    [self _splitViewDidResizeSubviews:root_];
+    newSession.delegate = self;
+    newSession.view = newView;
+    [self.viewToSessionMap setObject:newSession forKey:newView];
+    [self checkInvariants:@"After adding bottom row"];
     newSession.useMetal = NO;
     [self updateUseMetal];
 }

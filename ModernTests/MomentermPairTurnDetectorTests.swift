@@ -64,6 +64,21 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
         XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .working)
     }
 
+    // Claude Code v2.1.208 live progress line: no braille spinner, no “esc to
+    // interrupt”, no “Thinking” token — captured verbatim from a stalled relay.
+    func testWorkingOnClaudeV2SparkleProgressLine() {
+        let tail = "⏺ Searching for 1 pattern, reading 4 files…\n✳ Frolicking… (2m 6s · ↓ 1.3k tokens · almost done thinking)"
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .working)
+    }
+
+    // The FINISHED form of the same line has no parenthesized live counters
+    // and must read as a ready composer, or a completed turn would never end.
+    func testReadyOnClaudeV2FinishedSparkleLine() {
+        let tail = "  [[END_TURN]]\n✻ Sautéed for 15s\n❯ "
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .ready)
+        XCTAssertTrue(MomentermPairTurnDetector.tailContainsEndTurn(tail))
+    }
+
     func testAwaitingConfirmationOnYesNoGate() {
         let tail = "Do you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select"
         XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .awaitingConfirmation)

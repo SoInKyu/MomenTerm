@@ -147,12 +147,28 @@ final class MomentermPairTurnDetector: NSObject {
         return Set(braille)
     }()
 
+    // Claude Code v2's live progress line: a sparkle glyph, a gerund, an
+    // ellipsis, then parenthesized live counters — e.g.
+    // “✳ Frolicking… (2m 6s · ↓ 1.3k tokens · almost done thinking)”.
+    // It shows neither braille spinners nor “esc to interrupt”, so it needs
+    // its own matcher. The FINISHED form (“✻ Sautéed for 15s”) has no
+    // parenthesized counters and must NOT match — the sparkle glyphs alone
+    // are useless as a signal because they persist on the finished line.
+    private static let sparkleProgressRegex = try? NSRegularExpression(
+        pattern: "(?m)^\\s*[·✢✳✶✻✽]\\s+\\S[^\\n]*…\\s*\\(", options: [])
+
     private static func looksWorking(_ tail: String) -> Bool {
         if tail.contains(where: { spinnerScalars.contains($0) }) {
             return true
         }
         for token in workingTokens where tail.contains(token) {
             return true
+        }
+        if let regex = sparkleProgressRegex {
+            let range = NSRange(tail.startIndex..., in: tail)
+            if regex.firstMatch(in: tail, options: [], range: range) != nil {
+                return true
+            }
         }
         return false
     }

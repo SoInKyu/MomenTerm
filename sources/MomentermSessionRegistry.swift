@@ -80,6 +80,17 @@ import AppKit
         return entries[sessionGuid]?.projectId
     }
 
+    /// True when the session belongs to a project whose 열기 방식 is 편집/검토.
+    /// ⌘⇧D consults this: only edit/review sessions get the AI pair — every
+    /// other pane keeps iTerm's stock horizontal split.
+    @objc(momentermIsEditReviewSessionWithGuid:)
+    func isEditReviewSession(guid: String) -> Bool {
+        guard let pid = projectId(forSessionGuid: guid) else { return false }
+        let store = MomentermProjectStorage.shared.load()
+        guard let idx = store.findProject(withId: pid) else { return false }
+        return store.spaces[idx.spaceIndex].projects[idx.projectIndex].launchMode == .editReview
+    }
+
     /// Most recently focused live session GUID for the given project, if any.
     @objc func latestSessionGuid(forProjectId projectId: String) -> String? {
         guard !projectId.isEmpty else { return nil }

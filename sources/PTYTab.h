@@ -222,6 +222,9 @@ extern NSString *const PTYTabArrangementOptionsPendingJumps;
 - (PTYSession*)sessionAbove:(PTYSession*)session;
 - (PTYSession*)sessionBelow:(PTYSession*)session;
 - (BOOL)canSplitVertically:(BOOL)isVertical withSize:(NSSize)newSessionSize;
+- (BOOL)canSplitVertically:(BOOL)isVertical
+                  withSize:(NSSize)newSessionSize
+             targetSession:(PTYSession *)targetSession;
 - (NSImage*)image:(BOOL)withSpaceForFrame;
 - (BOOL)blur;
 - (double)blurRadius;
@@ -237,6 +240,13 @@ extern NSString *const PTYTabArrangementOptionsPendingJumps;
              newSession:(PTYSession *)newSession
                  before:(BOOL)before
           targetSession:(PTYSession*)targetSession;
+
+// MomenTerm: adds `newSession` as a full-width row at the BOTTOM of the tab's
+// split tree regardless of the current layout (if the root splitter is
+// side-by-side, its children first sink into a wrapper split). Used by AI
+// pairing so every 편집자|검토자 pair reads as one full-width row. Not
+// supported in tmux tabs.
+- (void)momentermAddBottomRowSession:(PTYSession *)newSession;
 
 // A viewMap maps a session's unique ID to a SessionView. Views in the
 // arrangement with matching session unique IDs will be assigned those

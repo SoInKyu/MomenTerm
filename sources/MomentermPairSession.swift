@@ -3,8 +3,8 @@
 //  iTerm2
 //
 //  Orchestrator for the Codex ⇄ Claude pairing feature. Drives a relay between
-//  two live CLI panes — split panes in one window (editor on the left, a
-//  vertical split hosting the reviewer on the right):
+//  two live CLI panes — a pair of fresh split panes added to one tab (editor
+//  left, reviewer right; the user's own shell pane is never touched):
 //
 //    • editor (claude)   — edits files in the repo to implement the seeded task
 //    • reviewer (codex)  — read-only; reviews the editor's git diff and either
@@ -68,8 +68,6 @@ final class MomentermPairSession: NSObject {
     private let sentinelResponseGrace: TimeInterval = 2.0
     private let readyResponseGrace: TimeInterval = 5.0
     private let tickInterval: TimeInterval = 1.0
-    private let editorTailLines = 40
-    private let reviewerTailLines = 80
 
     @objc var maxRounds: Int = 12
     @objc private(set) var roundCount: Int = 0
@@ -94,6 +92,14 @@ final class MomentermPairSession: NSObject {
         case finished
     }
     private var phase: Phase = .awaitingEditorFirstTurn
+    private var phaseDebugValue: Int {
+        switch phase {
+        case .awaitingEditorFirstTurn: return 0
+        case .editorTurn: return 1
+        case .reviewerTurn: return 2
+        case .finished: return 3
+        }
+    }
     /// Set once the editor has settled into a ready composer at least once —
     /// i.e. the CLI finished booting. Only then do we start watching for the
     /// user's task work, so boot-time spinner output isn't mistaken for it.
@@ -111,6 +117,7 @@ final class MomentermPairSession: NSObject {
     private var capturedTaskContext: String = ""
     private var startTime: TimeInterval = 0
     private var injectionTime: TimeInterval = 0
+    private var tickCount = 0
     private var startCommitSHA: String?
     private var editorCwd: String = ""
     private var scratchDir: URL?
@@ -150,16 +157,22 @@ final class MomentermPairSession: NSObject {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         scratchDir = dir
 
+        NSLog("[MomenTerm] pair start: editor=%@ reviewer=%@ cwd=%@",
+              editor.guid ?? "?", reviewer.guid ?? "?", editorCwd)
         let t = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
 
-        // Neon grouping borders + turn-direction pills. The user types into
-        // the editor first, so point the direction indicator at it right away.
-        let eb = MomentermPairBorderView(role: .editor)
-        let rb = MomentermPairBorderView(role: .reviewer)
+        // Neon grouping borders + turn-direction pills, in this pair's own
+        // accent color with a shared ①②③ badge so coexisting pairs are
+        // visually distinct. The user types into the editor first, so point
+        // the direction indicator at it right away.
+        let ordinal = MomentermPairRegistry.shared.nextPairOrdinal()
+        let accent = MomentermPairBorderView.accentColor(forOrdinal: ordinal)
+        let eb = MomentermPairBorderView(role: .editor, accent: accent, ordinal: ordinal)
+        let rb = MomentermPairBorderView(role: .reviewer, accent: accent, ordinal: ordinal)
         eb.attach(to: editor.view)
         rb.attach(to: reviewer.view)
         editorBorder = eb
@@ -190,7 +203,7 @@ final class MomentermPairSession: NSObject {
         phase = .finished
         timer?.invalidate()
         timer = nil
-        DLog("MomentermPairSession finished: outcome=\(outcome.rawValue) rounds=\(roundCount)")
+        NSLog("[MomenTerm] pair finished: outcome=%d rounds=%d", outcome.rawValue, roundCount)
 
         // Terminal state: paint the completion banner on both borders. Panes
         // are left alive and go back to normal dimming rules.
@@ -225,6 +238,17 @@ final class MomentermPairSession: NSObject {
             finish(.sessionDied); return
         }
 
+        tickCount += 1
+        if tickCount % 5 == 0 {
+            let speaker = (phase == .reviewerTurn) ? reviewer : editor
+            let t = tail(speaker)
+            NSLog("[MomenTerm] pair tick#%d phase=%d state=%d observedWorking=%d sentinel=%d idle=%d tailLen=%d",
+                  tickCount, phaseDebugValue, MomentermPairTurnDetector.turnState(tail: t).rawValue,
+                  observedWorkingThisTurn ? 1 : 0,
+                  MomentermPairTurnDetector.tailContainsEndTurn(t) ? 1 : 0,
+                  isIdle(speaker) ? 1 : 0, t.count)
+        }
+
         switch phase {
         case .awaitingEditorFirstTurn:
             handleAwaitingEditorFirstTurn(editor: editor)
@@ -247,9 +271,9 @@ final class MomentermPairSession: NSObject {
         // once (boot complete). `bootGrace` is a floor for the case where a
         // clean ready frame is never observed (e.g. input queued during boot).
         if !sawReadyComposer {
-            if MomentermPairTurnDetector.turnState(tail: tail(editor, editorTailLines)) == .ready {
+            if MomentermPairTurnDetector.turnState(tail: tail(editor)) == .ready {
                 sawReadyComposer = true
-                DLog("MomentermPairSession: editor composer ready (boot complete)")
+                NSLog("[MomenTerm] pair: editor composer ready (boot complete)")
             } else if nowRef() - startTime < bootGrace {
                 return
             }
@@ -258,15 +282,15 @@ final class MomentermPairSession: NSObject {
         // `turnEnded` requires having observed the editor working since start;
         // until the user submits a task there is nothing to relay.
         noteWorking(editor)
-        guard turnEnded(editor, tailLines: editorTailLines) else { return }
-        DLog("MomentermPairSession: first editor turn ended → relaying diff to reviewer")
+        guard turnEnded(editor) else { return }
+        NSLog("[MomenTerm] pair: first editor turn ended → relaying diff to reviewer")
         capturedTaskContext = captureEditorContext(editor)
         relayDiffToReviewer()
     }
 
     private func handleEditorTurn(editor: PTYSession) {
         noteWorking(editor)
-        guard turnEnded(editor, tailLines: editorTailLines) else { return }
+        guard turnEnded(editor) else { return }
         relayDiffToReviewer()
     }
 
@@ -284,7 +308,7 @@ final class MomentermPairSession: NSObject {
 
     private func handleReviewerTurn(reviewer: PTYSession) {
         noteWorking(reviewer)
-        let reviewerTail = tail(reviewer, reviewerTailLines)
+        let reviewerTail = tail(reviewer)
 
         // Convergence is ONLY ever the explicit token — never inferred — and
         // never from a stale `[[APPROVED]]` left over from a prior reviewer
@@ -297,7 +321,7 @@ final class MomentermPairSession: NSObject {
             finish(.approved); return
         }
 
-        guard turnEnded(reviewer, tailLines: reviewerTailLines) else { return }
+        guard turnEnded(reviewer) else { return }
 
         // Not approved: relay the critique back to the editor (or hit the cap).
         roundCount += 1
@@ -327,9 +351,9 @@ final class MomentermPairSession: NSObject {
     /// began. Called every tick for the active pane.
     private func noteWorking(_ session: PTYSession) {
         guard !observedWorkingThisTurn else { return }
-        if MomentermPairTurnDetector.turnState(tail: tail(session, editorTailLines)) == .working {
+        if MomentermPairTurnDetector.turnState(tail: tail(session)) == .working {
             observedWorkingThisTurn = true
-            DLog("MomentermPairSession: observed speaker working this turn")
+            NSLog("[MomenTerm] pair: observed speaker working this turn")
         }
     }
 
@@ -337,18 +361,21 @@ final class MomentermPairSession: NSObject {
     /// lives in a pure, unit-tested function; the key guard is that we must
     /// have observed the speaker working THIS turn, so a prior turn's sentinel
     /// still on screen cannot end a turn that never really started.
-    private func turnEnded(_ session: PTYSession, tailLines: Int) -> Bool {
+    private func turnEnded(_ session: PTYSession) -> Bool {
         return MomentermPairTurnDetector.isTurnEnd(
             observedWorking: observedWorkingThisTurn,
             idle: isIdle(session),
             elapsed: nowRef() - injectionTime,
-            tail: tail(session, tailLines),
+            tail: tail(session),
             sentinelGrace: sentinelResponseGrace,
             readyGrace: readyResponseGrace)
     }
 
-    private func tail(_ session: PTYSession, _ lines: Int) -> String {
-        return session.momentermScreenTailString(lines)
+    /// The pane's whole visible frame. A fixed line-count tail is not enough:
+    /// the CLI pins its composer to the pane's bottom while the response (and
+    /// its sentinel line) sits at the top, a full pane-height away.
+    private func tail(_ session: PTYSession) -> String {
+        return session.momentermVisibleScreenTailString()
     }
 
     private func nowRef() -> TimeInterval { Date().timeIntervalSinceReferenceDate }
@@ -417,7 +444,7 @@ final class MomentermPairSession: NSObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak session] in
             session?.writeTask("\r")
         }
-        DLog("MomentermPairSession: injected \(text.count) chars into \(session.guid ?? "?")")
+        NSLog("[MomenTerm] pair: injected %d chars into %@", text.count, session.guid ?? "?")
     }
 
     // MARK: - Prompts (curly quotes per project convention)
@@ -427,7 +454,7 @@ final class MomentermPairSession: NSObject {
     /// task + the editor's plan), not code — the code always travels as the
     /// git diff, never scraped from the TUI.
     private func captureEditorContext(_ editor: PTYSession) -> String {
-        let cleaned = tail(editor, editorTailLines)
+        let cleaned = tail(editor)
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: MomentermPairSession.boxTrim) }
             .filter { !$0.contains("shortcuts") && !$0.contains("esc to interrupt") }

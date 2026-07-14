@@ -183,9 +183,9 @@
                                 </connections>
                             </menuItem>
                             <menuItem isSeparatorItem="YES" id="w1g-nK-kOV"/>
-                            <menuItem title="AI 페어링 시작/정지" keyEquivalent="D" identifier="Momenterm Toggle AI Pair" id="MPr-tg-001">
+                            <menuItem title="새 AI 페어링" keyEquivalent="D" identifier="Momenterm New AI Pair" id="MPr-tg-001">
                                 <connections>
-                                    <action selector="momentermTogglePairSession:" target="-1" id="MPr-tg-002"/>
+                                    <action selector="momentermNewPairSession:" target="-1" id="MPr-tg-002"/>
                                 </connections>
                             </menuItem>
                             <menuItem title="Split Horizontally with Current Profile" identifier="Split Horizontally with Current Profile" id="1201">

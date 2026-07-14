@@ -17930,12 +17930,18 @@ static const NSTimeInterval PTYSessionFocusReportBellSquelchTimeIntervalThreshol
                                       pad:NO
                        includeLastNewline:YES
                    trimTrailingWhitespace:YES
-                             cappedAtSize:8 * 1024
+                             cappedAtSize:32 * 1024
                              truncateTail:NO
                         continuationChars:nil
                                    coords:nil
                         deduplicateDECDHL:NO];
     return [result isKindOfClass:[NSString class]] ? result : @"";
+}
+
+// See PTYSession.h — the whole visible frame for the pairing orchestrator,
+// whose sentinel line can sit a full pane-height above the composer.
+- (NSString *)momentermVisibleScreenTailString {
+    return [self momentermScreenTailString:MAX(40, _screen.height + 8)];
 }
 
 #pragma mark - MomenTerm session sticker

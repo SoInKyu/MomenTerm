@@ -458,13 +458,16 @@ extern NSString *const iTermDidCreateTerminalWindowNotification;
 // Starts the two-pane edit/review pairing with `editor` as the Claude pane;
 // a vertical split hosts the Codex reviewer. `bootDelay` (seconds) lets a
 // freshly-launched editor shell reach its prompt before the CLIs are written.
+// Used by the sidebar/welcome edit-review project flows, where the fresh
+// project shell is the editor.
 - (void)momentermStartPairSessionWithEditor:(PTYSession *)editor
                                    bootDelay:(NSTimeInterval)bootDelay;
 
-// Menu action (⌘⇧D): stops the current pane's live relay if it has one,
-// otherwise starts a new pair with the current session as editor. Different
-// panes can each host their own pair.
-- (IBAction)momentermTogglePairSession:(id)sender;
+// Menu action (⌘⇧D): always adds a NEW pair to the current tab as a fresh
+// row below the current pane — editor (claude) left, reviewer (codex) right —
+// leaving the current pane untouched. Each press adds another independent
+// pair row.
+- (IBAction)momentermNewPairSession:(id)sender;
 
 @end
 

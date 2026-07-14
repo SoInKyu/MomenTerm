@@ -5,11 +5,13 @@
 //  Non-interactive overlay that visually groups the two panes taking part in
 //  an AI pairing session. Each paired SessionView gets one of these on top:
 //
-//    • a persistent neon border (shared hue with MomentermAttentionBarView) so
-//      the two panes read as one group, and
-//    • a top-left pill naming the pane's role (편집자 / 검토자) plus whose turn
-//      it is — the active speaker's border brightens and its pill pulses, so
-//      the direction of the exchange is visible at a glance.
+//    • a persistent neon border in the PAIR's own accent color — every pair
+//      draws from a small palette by ordinal, so when several pairs coexist,
+//      matching colors (and the matching ① ② badges in the pills) say which
+//      editor belongs to which reviewer at a glance, and
+//    • a top-left pill naming the pane's role (① 편집자 / ① 검토자) plus whose
+//      turn it is — the active speaker's border brightens and its pill pulses,
+//      so the direction of the exchange is visible at a glance.
 //
 //  On completion the border switches to a solid outcome color and the pill
 //  shows the result (승인/상한/정지). Clicks pass straight through to the
@@ -22,15 +24,32 @@ import AppKit
 final class MomentermPairBorderView: NSView {
 
     private let role: MomentermPairRole
+    private let ordinal: Int
     private let pill = NSTextField(labelWithString: "")
     private let pillBackground = NSView()
     private var isActive = false
     private var completed = false
 
-    private var neon: NSColor { MomentermAttentionBarView.momentermAttentionHighlightColor }
+    /// The pair's accent color; both panes of a pair share it.
+    private let neon: NSColor
 
-    @objc init(role: MomentermPairRole) {
+    /// Per-pair accent palette, cycled by pair ordinal. Hues are chosen to
+    /// stay distinct from the completion-banner colors (green/orange/red).
+    private static let accentPalette: [NSColor] = [
+        MomentermAttentionBarView.momentermAttentionHighlightColor,  // 네온 시안
+        .systemPink,
+        .systemYellow,
+        .systemPurple,
+    ]
+
+    @objc static func accentColor(forOrdinal ordinal: Int) -> NSColor {
+        return accentPalette[max(0, ordinal - 1) % accentPalette.count]
+    }
+
+    @objc init(role: MomentermPairRole, accent: NSColor, ordinal: Int) {
         self.role = role
+        self.neon = accent
+        self.ordinal = ordinal
         super.init(frame: .zero)
         wantsLayer = true
         layer?.borderWidth = 2.5
@@ -66,17 +85,44 @@ final class MomentermPairBorderView: NSView {
     /// relay is live (from attach until completion or detach), the pane is
     /// exempt from inactive-pane dimming so both halves of the pair stay at
     /// full brightness.
+    ///
+    /// SessionView lays its subviews out manually, so an autoresizing mask
+    /// alone does not keep this overlay glued to the pane through splitter
+    /// drags and window resizes — track the host's frame notifications too.
     @objc func attach(to host: NSView) {
         frame = host.bounds
         autoresizingMask = [.width, .height]
         host.addSubview(self)
         (host as? SessionView)?.momentermPairUndimmed = true
+        host.postsFrameChangedNotifications = true
+        hostFrameObserver = NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification,
+            object: host,
+            queue: .main) { [weak self, weak host] _ in
+            guard let self, let host, self.superview === host else { return }
+            self.frame = host.bounds
+            self.layoutPill()
+        }
         layoutPill()
     }
 
     @objc func detach() {
+        removeHostFrameObserver()
         (superview as? SessionView)?.momentermPairUndimmed = false
         removeFromSuperview()
+    }
+
+    private var hostFrameObserver: NSObjectProtocol?
+
+    private func removeHostFrameObserver() {
+        if let token = hostFrameObserver {
+            NotificationCenter.default.removeObserver(token)
+            hostFrameObserver = nil
+        }
+    }
+
+    deinit {
+        removeHostFrameObserver()
     }
 
     override func layout() {
@@ -91,16 +137,30 @@ final class MomentermPairBorderView: NSView {
         let w = pill.frame.width + padX * 2
         let h = pill.frame.height + padY * 2
         let x: CGFloat = 8
-        let y: CGFloat = 8
+        // Sit below the pane's per-pane title bar when one is shown — the
+        // pill must label the pane, not cover its title.
+        var y: CGFloat = 8
+        if let host = superview as? SessionView, host.showTitle() {
+            y = SessionView.titleHeight() + 6
+        }
         pillBackground.frame = NSRect(x: x, y: y, width: w, height: h)
         pill.frame = NSRect(x: x + padX, y: y + padY, width: pill.frame.width, height: pill.frame.height)
     }
 
     private var roleName: String {
+        let badge = Self.badge(forOrdinal: ordinal)
         switch role {
-        case .editor: return "편집자 (Claude)"
-        case .reviewer: return "검토자 (Codex)"
+        case .editor: return "\(badge) 편집자 (Claude)"
+        case .reviewer: return "\(badge) 검토자 (Codex)"
         }
+    }
+
+    /// ①②③… badge shared by both pills of a pair. Falls back to “#n” past ⑳.
+    private static func badge(forOrdinal ordinal: Int) -> String {
+        if (1...20).contains(ordinal), let scalar = UnicodeScalar(0x245F + ordinal) {
+            return String(scalar)
+        }
+        return "#\(ordinal)"
     }
 
     private func updatePillText() {

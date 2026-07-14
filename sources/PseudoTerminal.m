@@ -456,6 +456,13 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
     MomentermBottomStripView *_momentermBottomStripView;
     NSTimer *_momentermAttentionTimer;
 
+    // MomenTerm: set synchronously immediately before the addingSession: call
+    // that must insert its pane as a full-width bottom row (PTYTab
+    // momentermAddBottomRowSession:) and consumed by that same call. Never set
+    // across an async boundary — a per-request momentermBottomRow: parameter
+    // carries the intent until the synchronous hand-off.
+    BOOL _momentermNextSplitAddsBottomRow;
+
     // MomenTerm: floating windows that host the inline panels when detached
     NSWindow *_momentermGitGraphDetachedWindow;
     NSWindow *_momentermFileEditorDetachedWindow;
@@ -1474,12 +1481,95 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
 
 // MARK: - MomenTerm AI pairing (Codex ⇄ Claude)
 
-// ⌘⇧D menu action and bottom-strip person.2 affordance: stop the current
-// pane's live relay if it has one, otherwise start a new pair — the current
-// session becomes the editor (claude) and a vertical split hosts the reviewer
-// (codex). Pairs are per-pane, so other panes' relays are untouched and
-// several pairs can coexist in one window.
-- (IBAction)momentermTogglePairSession:(id)sender {
+// ⌘⇧D menu action: always adds a NEW pair to the current tab as a fresh
+// FULL-WIDTH row at the bottom — editor (claude) on the row's left, reviewer
+// (codex) on its right — so every pair reads as one equal-sized 편집자|검토자
+// row that resizes and closes as a unit, no matter how the existing panes are
+// arranged. Existing panes are left untouched; the user's shell never gets a
+// CLI written into it. Each press stacks another row. Stopping stays on the
+// bottom-strip person.2 toggle and ⌘W (pair-unit close).
+- (IBAction)momentermNewPairSession:(id)sender {
+    // The AI pair is exclusive to sessions of 편집/검토(edit-review) projects.
+    // Everywhere else — 단일(single) projects and plain shells — ⌘⇧D keeps
+    // iTerm's stock behavior: one horizontal split, no editor/reviewer.
+    if (![self momentermCurrentSessionWantsPair]) {
+        [self splitHorizontally:sender];
+        return;
+    }
+    [self momentermStartNewPairInCurrentTab];
+}
+
+// Adds a fresh editor|reviewer pair row to the current tab, unconditionally —
+// the mode check lives in the ⌘⇧D action; the bottom-strip person.2 button is
+// an explicit pairing affordance and comes straight here.
+- (void)momentermStartNewPairInCurrentTab {
+    PTYSession *current = [self currentSession];
+    if (!current) {
+        NSBeep();
+        return;
+    }
+    if ([current isTmuxClient]) {
+        // tmux owns its own layout; bottom-row insertion doesn't apply.
+        NSBeep();
+        return;
+    }
+    Profile *profile = [self profileForSplittingCurrentSession];
+    // The editor pane becomes a full-width bottom row; the intent rides the
+    // request itself (momentermBottomRow:) so concurrent splits can't steal
+    // it. The reviewer then splits off the editor normally, completing the
+    // row.
+    [self asyncSplitVertically:NO
+                        before:NO
+                       profile:profile
+                 targetSession:current
+             momentermBottomRow:YES
+                    completion:nil
+                         ready:^(PTYSession *editor, BOOL editorOK) {
+        if (!editorOK || !editor) {
+            NSBeep();
+            return;
+        }
+        [self asyncSplitVertically:YES
+                            before:NO
+                           profile:profile
+                     targetSession:editor
+                        completion:nil
+                             ready:^(PTYSession *reviewer, BOOL reviewerOK) {
+            if (!reviewerOK || !reviewer) {
+                // Half a pair is worse than none: retire the orphaned editor
+                // row so the tab returns to its pre-⇧⌘D layout.
+                [self closeSessionWithoutConfirmation:editor];
+                NSBeep();
+                return;
+            }
+            // The user types the task into the editor pane; the second split
+            // left focus on the reviewer, so hand it back. The user may have
+            // switched tabs while the splits were being created, so resolve
+            // the tab from the editor session rather than trusting currentTab.
+            [[self tabForSession:editor] setActiveSession:editor];
+            // Freshly-launched shells: give them time to reach their first
+            // prompt before the CLI commands are written.
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.7 * NSEC_PER_SEC)),
+                           dispatch_get_main_queue(), ^{
+                [PseudoTerminal momentermBeginPairWithEditor:editor reviewer:reviewer];
+            });
+        }];
+    }];
+}
+
+// YES iff the active session belongs to a project opened in 편집/검토 mode —
+// the only context where ⌘⇧D means “AI pair” instead of a stock split.
+- (BOOL)momentermCurrentSessionWantsPair {
+    NSString *guid = [self currentSession].guid;
+    if (guid.length == 0) {
+        return NO;
+    }
+    return [[MomentermSessionRegistry shared] momentermIsEditReviewSessionWithGuid:guid];
+}
+
+// Bottom-strip person.2 affordance keeps toggle semantics: stop the current
+// pane's live pair if it has one, otherwise add a fresh pair to this tab.
+- (void)momentermBottomStripDidTapPair {
     PTYSession *current = [self currentSession];
     MomentermPairSession *live = [[MomentermPairRegistry shared] livePairContaining:current];
     if (live) {
@@ -1488,13 +1578,7 @@ typedef NS_ENUM(int, iTermShouldHaveTitleSeparator) {
         [live stop];
         return;
     }
-    // The current pane is already a live shell, so the CLIs can be written
-    // immediately (no boot delay).
-    [self momentermStartPairSessionWithEditor:current bootDelay:0];
-}
-
-- (void)momentermBottomStripDidTapPair {
-    [self momentermTogglePairSession:nil];
+    [self momentermStartNewPairInCurrentTab];
 }
 
 // Shared pairing entry point. `editor` becomes the Claude (editing) pane; a
@@ -10132,6 +10216,17 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
 }
 
 - (BOOL)canSplitPaneVertically:(BOOL)isVertical withBookmark:(Profile *)theBookmark {
+    PTYTab *tab = [self currentTab];
+    return [self canSplitPaneVertically:isVertical
+                           withBookmark:theBookmark
+                                  inTab:tab
+                          targetSession:tab.activeSession];
+}
+
+- (BOOL)canSplitPaneVertically:(BOOL)isVertical
+                  withBookmark:(Profile *)theBookmark
+                         inTab:(PTYTab *)tab
+                 targetSession:(PTYSession *)targetSession {
     if ([self inInstantReplay]) {
         // Things get very complicated in this case. Just disallow it.
         DLog(@"In instant replay");
@@ -10154,7 +10249,7 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     NSSize newSessionSize = NSMakeSize(charSize.width * kVT100ScreenMinColumns + [iTermPreferences intForKey:kPreferenceKeySideMargins] * 2,
                                        charSize.height * kVT100ScreenMinRows + [iTermPreferences intForKey:kPreferenceKeyTopBottomMargins] * 2);
 
-    return [[self currentTab] canSplitVertically:isVertical withSize:newSessionSize];
+    return [tab canSplitVertically:isVertical withSize:newSessionSize targetSession:targetSession];
 }
 
 - (void)toggleMaximizeActivePane {
@@ -10339,11 +10434,20 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     }
     SessionView *originalNewSessionView = [[newSession.view retain] autorelease];
 
+    // MomenTerm AI pairing (one-shot; armed in momentermNewPairSession:).
+    const BOOL momentermPairPane = _momentermNextSplitAddsBottomRow;
+    _momentermNextSplitAddsBottomRow = NO;
+
     // This assigns to newSession.view
-    [tab splitVertically:isVertical
-              newSession:newSession
-                  before:before
-           targetSession:targetSession];
+    if (momentermPairPane) {
+        // The editor pane opens as a full-width row at the bottom of the tab.
+        [tab momentermAddBottomRowSession:newSession];
+    } else {
+        [tab splitVertically:isVertical
+                  newSession:newSession
+                      before:before
+               targetSession:targetSession];
+    }
 
     NSSize size = [newSession.view frame].size;
     if (performSetup) {
@@ -10353,7 +10457,14 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
         // gemini / localLLM) into the brand-new pane so the user gets the
         // same model auto-running. PTY needs a moment for fork+shell init
         // before writeTask is meaningful — defer with dispatch_after.
-        NSString *parentInjectedCommand = targetSession.momentermInjectedCommand;
+        //
+        // Pair panes are exempt: the pairing orchestrator boots its own CLIs
+        // (claude with the turn-sentinel system prompt, codex), and an
+        // inherited plain `claude` auto-boot would swallow those commands
+        // mid-boot — the editor would then run without the [[END_TURN]]
+        // instruction and the relay would never see a turn end.
+        NSString *parentInjectedCommand =
+            momentermPairPane ? nil : targetSession.momentermInjectedCommand;
         if (parentInjectedCommand.length > 0) {
             newSession.momentermInjectedCommand = parentInjectedCommand;
             NSString *parentProjectId = nil;
@@ -10452,6 +10563,26 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
                targetSession:(PTYSession *)targetSession
                   completion:(void (^)(PTYSession *, BOOL ok))completion
                        ready:(void (^)(PTYSession *, BOOL ok))ready {
+    [self asyncSplitVertically:isVertical
+                        before:before
+                       profile:theBookmark
+                 targetSession:targetSession
+            momentermBottomRow:NO
+                    completion:completion
+                         ready:ready];
+}
+
+// MomenTerm: momentermBottomRow asks for the new pane to be inserted as a
+// full-width bottom row of the target session's tab (the AI-pairing editor
+// pane) instead of splitting next to its target. The intent travels with the
+// request so interleaved ordinary splits can never consume it.
+- (void)asyncSplitVertically:(BOOL)isVertical
+                      before:(BOOL)before
+                     profile:(Profile *)theBookmark
+               targetSession:(PTYSession *)targetSession
+          momentermBottomRow:(BOOL)momentermBottomRow
+                  completion:(void (^)(PTYSession *, BOOL ok))completion
+                       ready:(void (^)(PTYSession *, BOOL ok))ready {
     if ([targetSession isTmuxClient]) {
         [self willSplitTmuxPane];
         TmuxController *controller = [targetSession tmuxController];
@@ -10493,20 +10624,25 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
         }
         return;
     }
-    PTYSession *currentSession = [self currentSession];
-    if (currentSession) {
-        [currentSession asyncInitialDirectoryForNewSessionBasedOnCurrentDirectoryWithSSHIdentity:theBookmark.sshIdentity
-                                                                                       completion:^(NSString *oldCWD) {
+    // The new pane inherits its starting directory and variable scope from
+    // the session being split, not from whichever pane happens to be focused
+    // when the request lands — focus can move while an async request (pair
+    // creation, API split) is in flight.
+    PTYSession *sourceSession = targetSession ?: [self currentSession];
+    if (sourceSession) {
+        [sourceSession asyncInitialDirectoryForNewSessionBasedOnCurrentDirectoryWithSSHIdentity:theBookmark.sshIdentity
+                                                                                      completion:^(NSString *oldCWD) {
             DLog(@"Get local pwd so I can split: %@", oldCWD);
             PTYSession *session = [self splitVertically:isVertical
                                                  before:before
                                                 profile:theBookmark
                                           targetSession:targetSession
                                                  oldCWD:oldCWD
-                                            parentScope:currentSession.variablesScope
+                                            parentScope:sourceSession.variablesScope
+                                     momentermBottomRow:momentermBottomRow
                                              completion:ready];
             if (completion) {
-                completion(session, YES);
+                completion(session, session != nil);
             }
         }];
         return;
@@ -10519,9 +10655,10 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
                                   targetSession:targetSession
                                          oldCWD:nil
                                      parentScope:nil
+                             momentermBottomRow:momentermBottomRow
                                      completion:ready];
     if (completion) {
-        completion(session, YES);
+        completion(session, session != nil);
     }
 }
 
@@ -10531,6 +10668,7 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
                   targetSession:(PTYSession *)targetSession
                          oldCWD:(NSString *)oldCWD
                     parentScope:(iTermVariableScope *)parentScope
+             momentermBottomRow:(BOOL)momentermBottomRow
                      completion:(void (^)(PTYSession *, BOOL))completion {
     if ([targetSession isTmuxClient]) {
         [self willSplitTmuxPane];
@@ -10547,9 +10685,19 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
         return nil;
     }
     PtyLog(@"--------- splitVertically -----------");
-    if (![self canSplitPaneVertically:isVertical withBookmark:theBookmark]) {
+    // The request may have been made against a session in a non-current tab
+    // (and the user can switch tabs while the async pwd fetch runs), so
+    // measure the tab that will actually host the split.
+    PTYTab *tabToSplit = [self tabForSession:targetSession] ?: [self currentTab];
+    if (![self canSplitPaneVertically:isVertical
+                          withBookmark:theBookmark
+                                 inTab:tabToSplit
+                         targetSession:targetSession]) {
         DLog(@"Beep: can't split");
         NSBeep();
+        if (completion) {
+            completion(nil, NO);
+        }
         return nil;
     }
 
@@ -10568,6 +10716,9 @@ static CGFloat iTermDimmingAmount(PSMTabBarControl *tabView) {
     }
     PTYSession* newSession = [[self.sessionFactory newSessionWithProfile:theBookmark
                                                                   parent:targetSession] autorelease];
+    // Hand the bottom-row intent to the synchronous addingSession: call via
+    // the ivar it consumes; no async boundary between set and consume.
+    _momentermNextSplitAddsBottomRow = momentermBottomRow;
     [self splitVertically:isVertical
                    before:before
             addingSession:newSession
@@ -12684,6 +12835,13 @@ typedef NS_ENUM(NSUInteger, iTermBroadcastCommand) {
 // Returns true if the given menu item is selectable.
 - (BOOL)validateMenuItem:(NSMenuItem *)item {
     BOOL result = YES;
+    if (item.action == @selector(momentermNewPairSession:)) {
+        // ⌘⇧D is contextual: AI pair in an edit/review project session, a
+        // stock horizontal split anywhere else. Retitle so the menu says
+        // what the key will actually do.
+        item.title = [self momentermCurrentSessionWantsPair] ? @"새 AI 페어링" : @"가로 분할";
+        return YES;
+    }
     if ([item action] == @selector(detachTmux:) ||
         [item action] == @selector(newTmuxWindow:) ||
         [item action] == @selector(newTmuxTab:) ||

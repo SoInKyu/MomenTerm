@@ -403,6 +403,13 @@ backgroundColor:(NSColor *)backgroundColor;
 @property(nonatomic) NSTimeInterval momentermLastOutputAt;
 - (NSString *)momentermScreenTailString:(NSInteger)numberOfLines;
 
+// MomenTerm: the full visible screen's text (plus a small scrollback margin).
+// The pairing orchestrator needs the whole frame, not a fixed tail: a CLI TUI
+// pins its composer to the BOTTOM of the pane while the response — and its
+// [[END_TURN]] sentinel — sits at the TOP, so in a tall pane a fixed 40-line
+// tail never sees the sentinel and the relay stalls.
+- (NSString *)momentermVisibleScreenTailString;
+
 @property(nonatomic, readonly) iTermSessionNameController *nameController;
 
 // Returns the presentationName from the nameController. This is only here because

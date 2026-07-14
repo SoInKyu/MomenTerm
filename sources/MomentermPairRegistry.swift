@@ -19,9 +19,17 @@ final class MomentermPairRegistry: NSObject {
     @objc static let shared = MomentermPairRegistry()
 
     private var pairs: [MomentermPairSession] = []
+    private var ordinalCounter = 0
 
     @objc func add(_ pair: MomentermPairSession) {
         pairs.append(pair)
+    }
+
+    /// Monotonically increasing pair number, used to pick each pair's accent
+    /// color and the ①②③ badge that visually ties its two panes together.
+    @objc func nextPairOrdinal() -> Int {
+        ordinalCounter += 1
+        return ordinalCounter
     }
 
     /// The live pair (if any) that `session` belongs to. Finished pairs don't
