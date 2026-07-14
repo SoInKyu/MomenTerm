@@ -26,10 +26,13 @@
 //  (spinner / “esc to interrupt”) since that turn began, then STOP looking
 //  working. That “observed working this turn” latch is what distinguishes a
 //  genuine new turn end from a stale sentinel on a briefly-quiet screen.
-//  Deliberately, sentinel detection does NOT require PTY quiet time: the user
-//  may already be typing (or have queued) their next message into the editor,
-//  and each keystroke echo resets the idle clock — that must not stall the
-//  handoff. Only the no-sentinel ready-composer fallback requires true idle.
+//  Deliberately, NOTHING here requires PTY quiet time: the user may already
+//  be typing (or have queued) their next message into the editor, and a
+//  custom status line repainting every second keeps the PTY permanently
+//  busy — an idle clock would never fire. The no-sentinel fallback instead
+//  requires an explicit ready composer plus a NORMALIZED screen signature
+//  (per-second footer chrome excluded) that has been stable for a grace
+//  period, after a meaningful screen change was observed this turn.
 //
 //  Two robustness pillars (see MomentermPairTurnDetector):
 //    1. git diff as the review payload — never scrape the editor's TUI for the
@@ -63,11 +66,14 @@ enum MomentermPairOutcome: Int {
 final class MomentermPairSession: NSObject {
 
     // MARK: Tunables
-    private let idleThreshold: TimeInterval = 1.5   // pane quiet before we judge state
     private let bootGrace: TimeInterval = 4.0       // let the editor CLI draw its composer
     private let sentinelResponseGrace: TimeInterval = 2.0
     private let readyResponseGrace: TimeInterval = 5.0
     private let tickInterval: TimeInterval = 1.0
+    // Screen activity without ever classifying as working/ready/sentinel for
+    // this long → surface a one-shot advisory (likely an unrecognized CLI
+    // output format). Never auto-approves or forces a handoff.
+    private let stallWarningThreshold: TimeInterval = 30.0
 
     @objc var maxRounds: Int = 12
     @objc private(set) var roundCount: Int = 0
@@ -103,6 +109,11 @@ final class MomentermPairSession: NSObject {
     /// sentinel lingering in the screen tail could trigger a premature
     /// transition on a brief quiet moment before the speaker has even started.
     private var observedWorkingThisTurn = false
+    /// Per-turn screen tracking: last normalized signature, time of the last
+    /// meaningful change, whether any change was seen this turn, and whether
+    /// the stall warning already fired. Reset alongside the working latch at
+    /// session start, on every injection, and on every speaker switch.
+    private var screenTracker = MomentermPairTurnScreenTracker()
     /// The editor's screen at the end of its first turn, cleaned and handed to
     /// the reviewer as context (carries the user's typed task + the editor's
     /// plan). Empty if it could not be captured.
@@ -125,8 +136,11 @@ final class MomentermPairSession: NSObject {
         isRunning = true
         phase = .awaitingEditorFirstTurn
         sawReadyComposer = false
-        observedWorkingThisTurn = false
         startTime = nowRef()
+        // No injection precedes the user's first typed turn; anchor the
+        // graces (and the stall clock) at session start instead.
+        injectionTime = startTime
+        beginTurnTracking()
         roundCount = 0
 
         // Resolve the editor's working directory + baseline commit so every
@@ -228,14 +242,30 @@ final class MomentermPairSession: NSObject {
             finish(.sessionDied); return
         }
 
+        // Read the speaker's screen ONCE per tick and reuse it for the whole
+        // judgement — tracking, the working latch, the stall warning, and the
+        // turn-end decision must all see the same frame.
+        let speaker: PTYSession
+        switch phase {
+        case .awaitingEditorFirstTurn, .editorTurn:
+            speaker = editor
+        case .reviewerTurn:
+            speaker = reviewer
+        case .finished:
+            return
+        }
+        let screen = tail(speaker)
+        screenTracker.observe(signature: MomentermPairTurnDetector.stabilitySignature(forTail: screen),
+                              now: nowRef())
+        warnIfTurnDetectionStalled(screen: screen)
 
         switch phase {
         case .awaitingEditorFirstTurn:
-            handleAwaitingEditorFirstTurn(editor: editor)
+            handleAwaitingEditorFirstTurn(editor: editor, screen: screen)
         case .editorTurn:
-            handleEditorTurn(editor: editor)
+            handleEditorTurn(screen: screen)
         case .reviewerTurn:
-            handleReviewerTurn(reviewer: reviewer)
+            handleReviewerTurn(screen: screen)
         case .finished:
             break
         }
@@ -245,13 +275,13 @@ final class MomentermPairSession: NSObject {
     /// wait for them to submit a task (the pane leaves its idle composer and
     /// starts working), then treat the return to idle as the end of the
     /// editor's first turn and open the review relay.
-    private func handleAwaitingEditorFirstTurn(editor: PTYSession) {
+    private func handleAwaitingEditorFirstTurn(editor: PTYSession, screen: String) {
         // Separate boot noise from real task work: only begin watching for the
         // user's task once the composer has settled into a ready state at least
         // once (boot complete). `bootGrace` is a floor for the case where a
         // clean ready frame is never observed (e.g. input queued during boot).
         if !sawReadyComposer {
-            if MomentermPairTurnDetector.turnState(tail: tail(editor)) == .ready {
+            if MomentermPairTurnDetector.turnState(tail: screen) == .ready {
                 sawReadyComposer = true
                 DLog("MomentermPairSession: editor composer ready (boot complete)")
             } else if nowRef() - startTime < bootGrace {
@@ -259,18 +289,16 @@ final class MomentermPairSession: NSObject {
             }
         }
 
-        // `turnEnded` requires having observed the editor working since start;
-        // until the user submits a task there is nothing to relay.
-        noteWorking(editor)
-        guard turnEnded(editor) else { return }
+        noteWorking(screen: screen)
+        guard turnEnded(screen: screen) else { return }
         DLog("MomentermPairSession: first editor turn ended → relaying diff to reviewer")
-        capturedTaskContext = captureEditorContext(editor)
+        capturedTaskContext = captureEditorContext(screen: screen)
         relayDiffToReviewer()
     }
 
-    private func handleEditorTurn(editor: PTYSession) {
-        noteWorking(editor)
-        guard turnEnded(editor) else { return }
+    private func handleEditorTurn(screen: String) {
+        noteWorking(screen: screen)
+        guard turnEnded(screen: screen) else { return }
         relayDiffToReviewer()
     }
 
@@ -286,9 +314,8 @@ final class MomentermPairSession: NSObject {
         enter(.reviewerTurn, speaker: .reviewer)
     }
 
-    private func handleReviewerTurn(reviewer: PTYSession) {
-        noteWorking(reviewer)
-        let reviewerTail = tail(reviewer)
+    private func handleReviewerTurn(screen: String) {
+        noteWorking(screen: screen)
 
         // Convergence is ONLY ever the explicit token — never inferred — and
         // never from a stale `[[APPROVED]]` left over from a prior reviewer
@@ -296,12 +323,12 @@ final class MomentermPairSession: NSObject {
         if MomentermPairTurnDetector.isApproval(
             observedWorking: observedWorkingThisTurn,
             elapsed: nowRef() - injectionTime,
-            tail: reviewerTail,
+            tail: screen,
             grace: sentinelResponseGrace) {
             finish(.approved); return
         }
 
-        guard turnEnded(reviewer) else { return }
+        guard turnEnded(screen: screen) else { return }
 
         // Not approved: relay the critique back to the editor (or hit the cap).
         roundCount += 1
@@ -309,7 +336,7 @@ final class MomentermPairSession: NSObject {
             finish(.roundCapReached); return
         }
         guard let editor = editorSession else { finish(.sessionDied); return }
-        let comments = extractReviewerComments(fromTail: reviewerTail)
+        let comments = extractReviewerComments(fromTail: screen)
         inject(editorFeedbackPrompt(comments: comments), into: editor)
         enter(.editorTurn, speaker: .editor)
     }
@@ -317,38 +344,73 @@ final class MomentermPairSession: NSObject {
     private func enter(_ newPhase: Phase, speaker: MomentermPairRole) {
         phase = newPhase
         setActiveSpeaker(speaker)
+        beginTurnTracking()
     }
 
     // MARK: - Turn detection
 
-    private func isIdle(_ session: PTYSession) -> Bool {
-        let last = session.momentermLastOutputAt
-        guard last > 0 else { return false }
-        return nowRef() - last >= idleThreshold
+    /// Reset every piece of per-turn detection state — the working latch, the
+    /// screen-change/stability tracker, and the stall advisory. A new turn
+    /// must never inherit any of it from the previous one.
+    private func beginTurnTracking() {
+        observedWorkingThisTurn = false
+        screenTracker.resetForNewTurn(now: nowRef())
+        editorBorder?.clearAdvisory()
+        reviewerBorder?.clearAdvisory()
     }
 
     /// Latch that the current speaker has been seen working since this turn
     /// began. Called every tick for the active pane.
-    private func noteWorking(_ session: PTYSession) {
+    private func noteWorking(screen: String) {
         guard !observedWorkingThisTurn else { return }
-        if MomentermPairTurnDetector.turnState(tail: tail(session)) == .working {
+        if MomentermPairTurnDetector.turnState(tail: screen) == .working {
             observedWorkingThisTurn = true
             DLog("MomentermPairSession: observed speaker working this turn")
         }
     }
 
     /// True when the current speaker has finished a turn. The decision itself
-    /// lives in a pure, unit-tested function; the key guard is that we must
-    /// have observed the speaker working THIS turn, so a prior turn's sentinel
-    /// still on screen cannot end a turn that never really started.
-    private func turnEnded(_ session: PTYSession) -> Bool {
+    /// lives in a pure, unit-tested function; both paths are guarded by the
+    /// working latch (a stale sentinel or leftover composer cannot end a turn
+    /// that never started), and the fallback additionally by this turn's
+    /// screen-change + stability tracking — PTY idle is never consulted.
+    private func turnEnded(screen: String) -> Bool {
+        let now = nowRef()
         return MomentermPairTurnDetector.isTurnEnd(
             observedWorking: observedWorkingThisTurn,
-            idle: isIdle(session),
-            elapsed: nowRef() - injectionTime,
-            tail: tail(session),
+            screenChangedThisTurn: screenTracker.changedThisTurn,
+            contentStableFor: screenTracker.stableFor(now: now),
+            elapsed: now - injectionTime,
+            tail: screen,
             sentinelGrace: sentinelResponseGrace,
             readyGrace: readyResponseGrace)
+    }
+
+    /// One-shot per-turn advisory: the screen has been active, yet the turn
+    /// never classified as working and cannot transition — the CLI's output
+    /// format is probably one we don't recognize. Two stuck shapes qualify:
+    /// an `.unknown` screen (any phase), and a `.ready` composer after an
+    /// injection whose work was never observed (the working latch blocks the
+    /// fallback forever). A `.ready` first turn is the user thinking, and a
+    /// gate is the user's call — neither warns. Non-terminating: the relay
+    /// keeps polling, nothing is approved or handed over on our own
+    /// initiative.
+    private func warnIfTurnDetectionStalled(screen: String) {
+        guard !screenTracker.warnedThisTurn,
+              screenTracker.changedThisTurn,
+              !observedWorkingThisTurn else { return }
+        let elapsed = nowRef() - injectionTime
+        guard elapsed >= stallWarningThreshold else { return }
+        let state = MomentermPairTurnDetector.turnState(tail: screen)
+        let stuck = state == .unknown ||
+            (state == .ready && phase != .awaitingEditorFirstTurn)
+        guard stuck,
+              !MomentermPairTurnDetector.tailContainsEndTurn(screen) else { return }
+        screenTracker.markWarned()
+        DLog("MomentermPairSession: turn detection stalled — phase=\(phase) elapsed=\(Int(elapsed))s state=\(state.rawValue) observedWorking=\(observedWorkingThisTurn) screenChanged=\(screenTracker.changedThisTurn)")
+        let advisory = "턴 감지 지연 — CLI 출력 형식 확인 필요"
+        editorBorder?.showAdvisory(advisory)
+        reviewerBorder?.showAdvisory(advisory)
     }
 
     /// The pane's whole visible frame. A fixed line-count tail is not enough:
@@ -422,9 +484,10 @@ final class MomentermPairSession: NSObject {
     private func inject(_ text: String, into session: PTYSession) {
         injectionTime = nowRef()
         // A fresh injection starts a new turn for the receiving pane: it must
-        // be seen working again before that turn can be considered ended, so a
-        // sentinel lingering from the previous turn can't fire immediately.
-        observedWorkingThisTurn = false
+        // be seen working again before that turn can be considered ended (so a
+        // sentinel lingering from the previous turn can't fire immediately),
+        // and the screen-stability tracker restarts from the echoed prompt.
+        beginTurnTracking()
         session.writeTask(Self.pasteStart + text + Self.pasteEnd)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak session] in
             session?.writeTask("\r")
@@ -438,8 +501,8 @@ final class MomentermPairSession: NSObject {
     /// cleaned of TUI box glyphs and footer chrome. This is prose (the user's
     /// task + the editor's plan), not code — the code always travels as the
     /// git diff, never scraped from the TUI.
-    private func captureEditorContext(_ editor: PTYSession) -> String {
-        let cleaned = tail(editor)
+    private func captureEditorContext(screen: String) -> String {
+        let cleaned = screen
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: MomentermPairSession.boxTrim) }
             .filter { !$0.contains("shortcuts") && !$0.contains("esc to interrupt") }

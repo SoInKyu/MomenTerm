@@ -90,7 +90,8 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
 
     // Prose lines must not pin the state at .working: a middle-dot bullet
     // with a trailing ellipsis, and a sparkle line whose ellipsis is NOT
-    // glued to the first word, both read as ready.
+    // glued to the first word, both read as ready (a bare composer prompt
+    // is visible below them).
     func testReadyOnProseLinesResemblingProgress() {
         let bulletTail = "· 파일 로딩 작업 정리…\n❯ "
         XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: bulletTail), .ready)
@@ -120,15 +121,64 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
         XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: ""), .working)
     }
 
-    // Regression: an editor (claude) that finishes its turn with a numbered
-    // summary list — extremely common — must be classified as .ready so the
-    // orchestrator's ready-composer fallback can fire. Two+ numbered lines were
-    // previously mistaken for a selection menu (.awaitingConfirmation), which
-    // wedged the first handoff forever.
+    // Regression (reviewer feedback): a screen we cannot classify must be
+    // .unknown, NOT .ready — a novel CLI progress format (no braille spinner,
+    // no known token, no sparkle-ellipsis shape) would otherwise be misread
+    // as a finished turn by the fallback.
+    func testUnknownOnNovelProgressFormat() {
+        let tail = "◐ Munching bits (step 3 of 7)"
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .unknown)
+    }
+
+    // A prompt glyph followed by text (queued input) is not an EMPTY composer;
+    // without other composer evidence the screen stays .unknown.
+    func testUnknownWhenPromptLineCarriesText() {
+        let tail = "Some earlier output\n❯ fix the bug next"
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .unknown)
+    }
+
+    func testReadyWhenIdleComposerHasNumberedSummary() {
+        // An editor (claude) that finishes its turn with a numbered summary
+        // list — extremely common — must be classified as .ready so the
+        // orchestrator's fallback can fire (the boxed bare prompt below is the
+        // composer evidence). Two+ numbered lines were once mistaken for a
+        // selection menu (.awaitingConfirmation), which wedged the handoff.
+        let tail = """
+        ● I made the following changes:
+
+          1. Updated the parser to handle the edge case
+          2. Added a regression test
+          3. Fixed the off-by-one error
+
+        All tests pass.
+
+        ╭──────────────────────────────╮
+        │ >                            │
+        ╰──────────────────────────────╯
+          ? for shortcuts
+        """
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .ready)
+    }
+
     // MARK: - Turn-boundary decision (stale-sentinel safety)
 
     private let sentinelGrace: TimeInterval = 2
     private let readyGrace: TimeInterval = 5
+
+    private func isTurnEnd(observedWorking: Bool,
+                           screenChanged: Bool,
+                           stableFor: TimeInterval,
+                           elapsed: TimeInterval,
+                           tail: String) -> Bool {
+        return MomentermPairTurnDetector.isTurnEnd(
+            observedWorking: observedWorking,
+            screenChangedThisTurn: screenChanged,
+            contentStableFor: stableFor,
+            elapsed: elapsed,
+            tail: tail,
+            sentinelGrace: sentinelGrace,
+            readyGrace: readyGrace)
+    }
 
     // The load-bearing regression: a prior turn's [[END_TURN]] is still sitting
     // in the screen tail, but the speaker has NOT been observed working since
@@ -137,87 +187,179 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
     // turn) would trigger a premature transition before the peer even starts.
     func testLeftoverSentinelDoesNotEndTurnBeforeWorking() {
         let tail = "previous turn output\n[[END_TURN]]\n(new prompt echoed here)"
-        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: false, idle: true, elapsed: 999,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertFalse(isTurnEnd(observedWorking: false, screenChanged: true,
+                                 stableFor: 999, elapsed: 999, tail: tail))
     }
 
     // Same guard for the ready-composer fallback: an idle ready composer with a
     // leftover screen cannot end a turn that never started working.
     func testReadyFallbackRequiresObservedWorking() {
         let tail = "All set.\n\n>\n? for shortcuts"
-        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: false, idle: true, elapsed: 999,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertFalse(isTurnEnd(observedWorking: false, screenChanged: true,
+                                 stableFor: 999, elapsed: 999, tail: tail))
     }
 
     func testTurnEndsOnFreshSentinelAfterWorking() {
         let tail = "I made the change.\n[[END_TURN]]"
-        XCTAssertTrue(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: true, elapsed: 3,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertTrue(isTurnEnd(observedWorking: true, screenChanged: true,
+                                stableFor: 0, elapsed: 3, tail: tail))
     }
 
     // Sentinel present but still inside the response grace — this is our own
     // just-echoed instruction, not the reply, so the turn has not ended yet.
     func testSentinelWithinGraceDoesNotEndTurn() {
         let tail = "…마지막에 [[END_TURN]] 을 출력하세요\n[[END_TURN]]"
-        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: true, elapsed: 1,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertFalse(isTurnEnd(observedWorking: true, screenChanged: true,
+                                 stableFor: 999, elapsed: 1, tail: tail))
     }
 
     func testReadyFallbackEndsTurnAfterWorkingWhenSentinelOmitted() {
         let tail = "Done.\n\n>\n? for shortcuts"
-        XCTAssertTrue(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: true, elapsed: 6,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertTrue(isTurnEnd(observedWorking: true, screenChanged: true,
+                                stableFor: 6, elapsed: 6, tail: tail))
     }
 
-    // Regression (reviewer feedback): the user typing — or having queued —
-    // their next message echoes keystrokes and keeps resetting the PTY idle
-    // clock. An explicit fresh sentinel must hand the turn over anyway; only
-    // screen content (no spinner) matters on this path.
-    func testFreshSentinelEndsTurnEvenWhenNotIdle() {
+    // Regression (reviewer feedback): the user typing — or a status line
+    // repainting every second — keeps the PTY permanently busy, so PTY idle
+    // is not part of this API at all. A fresh sentinel hands the turn over
+    // even while the screen is still churning (contentStableFor 0).
+    func testFreshSentinelEndsTurnWhileScreenStillChanging() {
         let tail = "I made the change.\n[[END_TURN]]"
-        XCTAssertTrue(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: false, elapsed: 3,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertTrue(isTurnEnd(observedWorking: true, screenChanged: true,
+                                stableFor: 0, elapsed: 3, tail: tail))
     }
 
     // But a sentinel on a pane that still LOOKS working (spinner / interrupt
     // hint in the tail) is a leftover above an active turn — not a turn end.
     func testSentinelOnStillWorkingPaneDoesNotEndTurn() {
         let tail = "[[END_TURN]]\n⣷ Thinking… (esc to interrupt)"
-        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: false, elapsed: 999,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertFalse(isTurnEnd(observedWorking: true, screenChanged: true,
+                                 stableFor: 999, elapsed: 999, tail: tail))
     }
 
     // Regression (reviewer feedback): .awaitingConfirmation is defined as “not
     // a finished turn”. A prior turn's sentinel lingering above a y/N /
     // permission / plan-approval gate must not be read as a fresh turn end —
-    // the sentinel path only fires on a ready composer.
+    // the sentinel path only fires once the pane is no longer engaged.
     func testSentinelAboveInteractiveGateDoesNotEndTurn() {
         let tail = "[[END_TURN]]\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select"
-        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: true, elapsed: 999,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertFalse(isTurnEnd(observedWorking: true, screenChanged: true,
+                                 stableFor: 999, elapsed: 999, tail: tail))
     }
 
-    func testApprovalAboveInteractiveGateRejected() {
-        let tail = "[[APPROVED]]\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select"
-        XCTAssertFalse(MomentermPairTurnDetector.isApproval(
-            observedWorking: true, elapsed: 999, tail: tail, grace: sentinelGrace))
+    // MARK: - Ready fallback (screen stability replaces PTY idle)
+
+    // Requirement: PTY output may never pause (per-second status line), but
+    // once the meaningful body has been stable for readyGrace on an explicit
+    // ready composer, the fallback ends the turn. PTY idle is not an input to
+    // this decision — there is deliberately no such parameter.
+    func testFallbackEndsWhenBodyStableDespiteOngoingPTYOutput() {
+        let tail = "Summary of the change.\n\n❯ \n⏰ 14:03:22 · 12.3k tokens"
+        XCTAssertTrue(isTurnEnd(observedWorking: true, screenChanged: true,
+                                stableFor: 6, elapsed: 20, tail: tail))
     }
 
-    // The no-sentinel fallback keeps the strict PTY-idle requirement — a ready
-    // composer alone, on a pane that is still emitting output, proves nothing.
-    func testReadyFallbackStillRequiresIdle() {
+    // The fallback must wait for the normalized content to be stable for the
+    // full grace — a body that changed a moment ago is still streaming.
+    func testFallbackRequiresStableContent() {
         let tail = "Done.\n\n>\n? for shortcuts"
-        XCTAssertFalse(MomentermPairTurnDetector.isTurnEnd(
-            observedWorking: true, idle: false, elapsed: 999,
-            tail: tail, sentinelGrace: sentinelGrace, readyGrace: readyGrace))
+        XCTAssertFalse(isTurnEnd(observedWorking: true, screenChanged: true,
+                                 stableFor: 1, elapsed: 999, tail: tail))
+    }
+
+    // A turn during which the screen never meaningfully changed cannot end via
+    // the fallback — a static leftover screen proves nothing about this turn.
+    func testFallbackRequiresScreenChangeThisTurn() {
+        let tail = "Done.\n\n>\n? for shortcuts"
+        XCTAssertFalse(isTurnEnd(observedWorking: true, screenChanged: false,
+                                 stableFor: 999, elapsed: 999, tail: tail))
+    }
+
+    // Requirement: an .unknown screen (no working evidence, no gate, no
+    // explicit composer) must NEVER end a turn via the ready fallback, no
+    // matter how stable it is — only an explicit sentinel can.
+    func testUnknownScreenDoesNotEndTurnViaFallback() {
+        let tail = "◐ Munching bits (step 3 of 7)"
+        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .unknown)
+        XCTAssertFalse(isTurnEnd(observedWorking: true, screenChanged: true,
+                                 stableFor: 999, elapsed: 999, tail: tail))
+    }
+
+    // A fresh sentinel on an .unknown screen still ends the turn: the agent's
+    // explicit signal must not depend on us recognizing its composer chrome.
+    func testFreshSentinelEndsTurnOnUnknownScreen() {
+        let tail = "◐ Munched all bits\n[[END_TURN]]"
+        XCTAssertTrue(isTurnEnd(observedWorking: true, screenChanged: true,
+                                stableFor: 0, elapsed: 3, tail: tail))
+    }
+
+    // MARK: - Stability signature
+
+    // Requirement: two screens that differ only in the user status line's
+    // per-second numbers (clock, token usage — rendered below the composer)
+    // must share one signature, or stability would never be reached.
+    func testStatusLineOnlyChangesShareSignature() {
+        let a = "● Done.\n\n❯ \n⏰ 14:32:05 · 12.3k tokens"
+        let b = "● Done.\n\n❯ \n⏰ 14:32:06 · 12.4k tokens"
+        XCTAssertEqual(MomentermPairTurnDetector.stabilitySignature(forTail: a),
+                       MomentermPairTurnDetector.stabilitySignature(forTail: b))
+    }
+
+    // Volatile counters ABOVE the composer (elapsed time, token counts in
+    // progress chrome) are normalized in place rather than dropped.
+    func testVolatileCountersAboveComposerAreNormalized() {
+        let a = "✻ Worked for 9s (↓ 1.2k tokens)\n❯ "
+        let b = "✻ Worked for 12s (↓ 1.3k tokens)\n❯ "
+        XCTAssertEqual(MomentermPairTurnDetector.stabilitySignature(forTail: a),
+                       MomentermPairTurnDetector.stabilitySignature(forTail: b))
+    }
+
+    // Requirement: a response-body change must yield a NEW signature (it
+    // resets the stability clock); sentinels are preserved verbatim.
+    func testBodyChangeChangesSignature() {
+        let a = "● Parsing the config file now.\n❯ \n⏰ 14:32:05"
+        let b = "● Wrote the regression test.\n❯ \n⏰ 14:32:05"
+        XCTAssertNotEqual(MomentermPairTurnDetector.stabilitySignature(forTail: a),
+                          MomentermPairTurnDetector.stabilitySignature(forTail: b))
+        let withSentinel = "All done.\n[[END_TURN]]\n❯ "
+        XCTAssertTrue(MomentermPairTurnDetector.stabilitySignature(forTail: withSentinel)
+            .contains("[[END_TURN]]"))
+    }
+
+    // MARK: - Per-turn screen tracker
+
+    // Requirement: a new turn must never reuse the previous turn's screen
+    // stability, change latch, or warning state.
+    func testTrackerResetClearsPerTurnState() {
+        var tracker = MomentermPairTurnScreenTracker()
+        tracker.resetForNewTurn(now: 100)
+        tracker.observe(signature: "a", now: 101)   // baseline, not a change
+        XCTAssertFalse(tracker.changedThisTurn)
+        tracker.observe(signature: "b", now: 103)   // meaningful change
+        tracker.markWarned()
+        XCTAssertTrue(tracker.changedThisTurn)
+        XCTAssertTrue(tracker.warnedThisTurn)
+        XCTAssertEqual(tracker.stableFor(now: 108), 5)
+
+        tracker.resetForNewTurn(now: 200)
+        XCTAssertFalse(tracker.changedThisTurn)
+        XCTAssertFalse(tracker.warnedThisTurn)
+        XCTAssertEqual(tracker.stableFor(now: 206), 6)
+        // The first screen after the reset is the new baseline — even though
+        // it differs from the previous turn's last signature.
+        tracker.observe(signature: "c", now: 201)
+        XCTAssertFalse(tracker.changedThisTurn)
+        XCTAssertEqual(tracker.stableFor(now: 204), 3)
+    }
+
+    func testTrackerUnchangedSignatureKeepsStabilityClock() {
+        var tracker = MomentermPairTurnScreenTracker()
+        tracker.resetForNewTurn(now: 0)
+        tracker.observe(signature: "a", now: 1)
+        tracker.observe(signature: "a", now: 5)     // same content — no reset
+        XCTAssertEqual(tracker.stableFor(now: 7), 6)
+        tracker.observe(signature: "b", now: 8)     // body changed — clock resets
+        XCTAssertEqual(tracker.stableFor(now: 9), 1)
     }
 
     // MARK: - Approval decision
@@ -240,29 +382,15 @@ final class MomentermPairTurnDetectorTests: XCTestCase {
             observedWorking: true, elapsed: 999, tail: tail, grace: sentinelGrace))
     }
 
+    func testApprovalAboveInteractiveGateRejected() {
+        let tail = "[[APPROVED]]\nDo you want to proceed?\n❯ 1. Yes\n  2. No\nEnter to select"
+        XCTAssertFalse(MomentermPairTurnDetector.isApproval(
+            observedWorking: true, elapsed: 999, tail: tail, grace: sentinelGrace))
+    }
+
     func testApprovalWithinGraceRejected() {
         let tail = "[[APPROVED]]"
         XCTAssertFalse(MomentermPairTurnDetector.isApproval(
             observedWorking: true, elapsed: 1, tail: tail, grace: sentinelGrace))
-    }
-
-    // MARK: - Heuristic classification
-
-    func testReadyWhenIdleComposerHasNumberedSummary() {
-        let tail = """
-        ● I made the following changes:
-
-          1. Updated the parser to handle the edge case
-          2. Added a regression test
-          3. Fixed the off-by-one error
-
-        All tests pass.
-
-        ╭──────────────────────────────╮
-        │ >                            │
-        ╰──────────────────────────────╯
-          ? for shortcuts
-        """
-        XCTAssertEqual(MomentermPairTurnDetector.turnState(tail: tail), .ready)
     }
 }

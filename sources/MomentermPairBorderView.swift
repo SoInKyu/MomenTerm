@@ -29,6 +29,9 @@ final class MomentermPairBorderView: NSView {
     private let pillBackground = NSView()
     private var isActive = false
     private var completed = false
+    /// Non-terminating notice appended to the pill (e.g. stalled turn
+    /// detection). Cleared on every new turn; never survives completion.
+    private var advisory: String?
 
     /// The pair's accent color; both panes of a pair share it.
     private let neon: NSColor
@@ -165,9 +168,28 @@ final class MomentermPairBorderView: NSView {
 
     private func updatePillText() {
         if completed { return }
-        pill.stringValue = isActive ? "● \(roleName) · 진행 중" : "\(roleName) · 대기"
-        pill.textColor = isActive ? neon : neon.withAlphaComponent(0.6)
+        var text = isActive ? "● \(roleName) · 진행 중" : "\(roleName) · 대기"
+        var color = isActive ? neon : neon.withAlphaComponent(0.6)
+        if let advisory {
+            text += " · ⚠ \(advisory)"
+            color = .systemOrange
+        }
+        pill.stringValue = text
+        pill.textColor = color
         layoutPill()
+    }
+
+    /// Show a non-terminating notice in the pill (the relay keeps running).
+    @objc func showAdvisory(_ text: String) {
+        guard !completed, advisory != text else { return }
+        advisory = text
+        updatePillText()
+    }
+
+    @objc func clearAdvisory() {
+        guard advisory != nil else { return }
+        advisory = nil
+        updatePillText()
     }
 
     /// Brighten + pulse when this pane is the current speaker; dim otherwise.
